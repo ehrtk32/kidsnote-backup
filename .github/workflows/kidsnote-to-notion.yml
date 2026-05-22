@@ -63,7 +63,7 @@ on:
       # The yaml passthrough below inverts this back to the existing
       # DISABLE_ALL_LLM env var that fetch.py reads.
       use_ai_features:
-        description: "AI 가공 — 알림장 안(💭본문요약·🧒자녀의일기·👨‍👩‍👧부모의편지) + 별도 페이지 4개(📖매월 성장 스토리·🌟우리 아이의 처음들·🌱분기별 관심사·💌연도별 선생님께). false면 단순 백업 + 통계 3개(📊통계 대시보드·📅작년에 우리 아이는·🥗영양 분석)만"
+        description: "AI 가공 — 알림장 안(💭요약·🧒자녀일기·👨‍👩‍👧부모편지) + 별도 페이지 4개(📖성장스토리·🌟마일스톤·🌱관심사·💌선생님께). false면 단순 백업 + 통계 3개(📊통계·📅작년추억·🥗영양)만"
         required: false
         default: "true"
         type: choice
