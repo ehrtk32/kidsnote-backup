@@ -2657,21 +2657,28 @@ class NotionMirror:
     # sorts the Notion DB by 이름 descending, all 7 dashboards cluster at
     # the top, and the daily entries cascade below in reverse-chronological
     # order without dashboards interleaving. Requested 2026-05-21.
+    # Titles are now year-agnostic per 2026-05-22 user feedback — each
+    # dashboard already groups its content by year *inside* the page, so
+    # putting a single year in the title was misleading (the stats
+    # dashboard, growth story, interests, milestones, and the thank-you
+    # card all span every year of data). The Today's-Memories page got
+    # renamed entirely ("작년에 우리 아이는") because that phrasing reads
+    # more like a family scrapbook header than a system label.
     DASHBOARD_REPORT_ID = -1
-    DASHBOARD_TITLE = "_ 📊 {year}년 통계 대시보드"
+    DASHBOARD_TITLE = "_ 📊 통계 대시보드"
     MEMORIES_REPORT_ID = -2
-    MEMORIES_TITLE = "_ 📅 {year}년 오늘의 추억"
+    MEMORIES_TITLE = "_ 📅 작년에 우리 아이는"
     NUTRITION_REPORT_ID = -3
-    NUTRITION_TITLE = "_ 🥗 {year}년 영양 분석"
+    NUTRITION_TITLE = "_ 🥗 영양 분석"
     # LLM-driven storytelling pages (auto-skip when Ollama isn't reachable)
     GROWTH_STORY_REPORT_ID = -4
-    GROWTH_STORY_TITLE = "_ 📖 {year}년 매월 성장 스토리"
+    GROWTH_STORY_TITLE = "_ 📖 매월 성장 스토리"
     MILESTONES_REPORT_ID = -5
-    MILESTONES_TITLE = "_ 🌟 {year}년 우리 아이의 처음들 (마일스톤)"
+    MILESTONES_TITLE = "_ 🌟 우리 아이의 처음들 (마일스톤)"
     INTERESTS_REPORT_ID = -6
-    INTERESTS_TITLE = "_ 🌱 {year}년 분기별 관심사"
+    INTERESTS_TITLE = "_ 🌱 분기별 관심사"
     TEACHER_THANKS_REPORT_ID = -7
-    TEACHER_THANKS_TITLE = "_ 💌 {year}년 선생님께"
+    TEACHER_THANKS_TITLE = "_ 💌 연도별 선생님께"
 
     @classmethod
     def _dashboard_title(cls, template: str) -> str:
@@ -2884,6 +2891,67 @@ class NotionMirror:
                     "type": "paragraph",
                     "paragraph": {"rich_text": [{"type": "text", "text": {"content": line}}]},
                 })
+
+        # ---- 연도별 상세 (per-year breakdown) ----
+        per_year = stats.get("per_year") or []
+        if per_year:
+            blocks.append(self._h2("📆 연도별 상세"))
+            blocks.append(self._para(
+                "각 연도의 알림장 수와 카테고리·월별 분포. 최근 연도부터 표시.",
+                color="gray",
+            ))
+            for yb in per_year:  # already newest-first from caller
+                yr = yb.get("year", "")
+                blocks.append({
+                    "object": "block",
+                    "type": "heading_3",
+                    "heading_3": {"rich_text": [{
+                        "type": "text",
+                        "text": {"content": f"📅 {yr}년 — 알림장 {yb.get('reports_total', 0)}개"},
+                    }]},
+                })
+                # 카테고리 분포 (top 10)
+                yc = yb.get("category_counts") or {}
+                if yc:
+                    top = sorted(yc.items(), key=lambda kv: kv[1], reverse=True)[:10]
+                    cat_line = ", ".join(f"{k}({v})" for k, v in top)
+                    blocks.append(self._para(f"🎨 카테고리: {cat_line}"))
+                # 월별 알림장 수
+                ym = yb.get("monthly_report_counts") or {}
+                if ym:
+                    ordered = sorted(ym.items())  # within a year, oldest month → newest month
+                    monthly_line = " · ".join(f"{m[5:7]}월 {n}" for m, n in ordered)
+                    blocks.append(self._para(f"📅 월별: {monthly_line}"))
+                # 작성자 비율
+                ya = yb.get("author_counts") or {}
+                if ya:
+                    author_line = ", ".join(
+                        f"{ {'teacher':'선생님','parent':'부모','admin':'원감/원장'}.get(k, k) }({v})"
+                        for k, v in ya.items()
+                    )
+                    blocks.append(self._para(f"✍️ 작성자: {author_line}"))
+                # 낮잠 / 식사 / 날씨 — show only when present
+                ysh = yb.get("sleep_hour_dist") or {}
+                if ysh:
+                    blocks.append(self._para(
+                        "💤 낮잠: " + ", ".join(
+                            f"{SLEEP_HOUR_KO.get(k, k)}({v})" for k, v in ysh.items()
+                        )
+                    ))
+                yms = yb.get("meal_status_dist") or {}
+                if yms:
+                    blocks.append(self._para(
+                        "🍽️ 식사: " + ", ".join(
+                            f"{STATUS_KO.get(k, k)}({v})" for k, v in yms.items()
+                        )
+                    ))
+                ywd = yb.get("weather_dist") or {}
+                if ywd:
+                    blocks.append(self._para(
+                        "🌤️ 날씨: " + ", ".join(
+                            f"{WEATHER_KO.get(k, k)}({v})" for k, v in ywd.items()
+                        )
+                    ))
 
         return blocks
 
@@ -3216,17 +3284,39 @@ class NotionMirror:
                 "color": "blue_background",
             },
         }]
-        for ym in sorted(reports_by_month.keys()):
+        # Iterate newest month first per 2026-05-22 user request — the page
+        # is read top-down and the most recent month should be visible first.
+        for ym in sorted(reports_by_month.keys(), reverse=True):
             items = reports_by_month[ym]
             if not items:
+                # No alimnotas in this month — render a thin placeholder block
+                # so the operator can see the gap exists rather than wondering
+                # whether the month was silently dropped.
+                blocks.append({
+                    "object": "block", "type": "heading_2",
+                    "heading_2": {"rich_text": [{"type": "text", "text": {"content": f"📅 {ym}"}}]},
+                })
+                blocks.append(self._para(
+                    "이 달에는 알림장이 없습니다.", color="gray",
+                ))
                 continue
             # Shrunk to 2500 chars (was 4500) — llama3.1:8b on CPU was
             # timing out at 180s with the longer context on every month.
             joined = "\n\n".join(
                 (r.get("content") or "").strip()[:200] for r in items[:15]
             )[:2500]
-            # Skip sparse months — LLM fills with generic filler otherwise
+            # Sparse-month handling: instead of silently dropping the month
+            # (which left visible gaps the user couldn't explain), render a
+            # heading + a transparent placeholder.
             if len(joined.strip()) < 200:
+                blocks.append({
+                    "object": "block", "type": "heading_2",
+                    "heading_2": {"rich_text": [{"type": "text", "text": {"content": f"📅 {ym}"}}]},
+                })
+                blocks.append(self._para(
+                    f"이 달은 알림장이 짧아서 성장 스토리를 만들기 어렵습니다 (알림장 {len(items)}개).",
+                    color="gray",
+                ))
                 continue
             given = _given_name(child_name) or "아이"
             topic = _topic_form(given)  # 하린→하린이 / 유주→유주
@@ -3257,7 +3347,15 @@ class NotionMirror:
                 final_labels=("성장 스토리:",),
             )
             if not story:
-                _LOGGER.warning("growth story for %s: empty LLM output, skipping", ym)
+                _LOGGER.warning("growth story for %s: empty LLM output, placeholder", ym)
+                blocks.append({
+                    "object": "block", "type": "heading_2",
+                    "heading_2": {"rich_text": [{"type": "text", "text": {"content": f"📅 {ym}"}}]},
+                })
+                blocks.append(self._para(
+                    "이 달의 성장 스토리를 LLM이 만들지 못했습니다. 다음 force-refresh에서 다시 시도됩니다.",
+                    color="gray",
+                ))
                 continue
             # Example-bleed guard. Previously we dropped the whole month
             # when one of 피아노/발레/자화상/음악교실/미술시간 leaked from
@@ -3314,6 +3412,9 @@ class NotionMirror:
         # date-sorted list: cap at 120 reports total, distributed across
         # the available date range so months stay represented.
         SAMPLE_CAP = 120
+        # Sample uniformly across the date range (oldest-first for sampling
+        # math), but then REVERSE so the rendered list is newest-first per
+        # 2026-05-22 user request.
         ordered_all = sorted(reports, key=lambda r: (r.get("date_written") or ""))
         if len(ordered_all) > SAMPLE_CAP:
             step = len(ordered_all) / SAMPLE_CAP
@@ -3322,6 +3423,9 @@ class NotionMirror:
         else:
             ordered = ordered_all
             sampled_note = ""
+        # Reverse for newest-first rendering. Sample selection was done in
+        # chronological order above so the spacing remains representative.
+        ordered = list(reversed(ordered))
         intro = (
             f"마지막 갱신: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
             f"알림장 {len(ordered)}개를 분석해 자녀의 발달 마일스톤(처음 ...)을 추출했습니다{sampled_note}."
@@ -3441,9 +3545,17 @@ class NotionMirror:
                 "color": "green_background",
             },
         }]
-        for q in sorted(reports_by_quarter.keys()):
+        # Newest quarter first per 2026-05-22 user request.
+        for q in sorted(reports_by_quarter.keys(), reverse=True):
             items = reports_by_quarter[q]
             if not items:
+                blocks.append({
+                    "object": "block", "type": "heading_2",
+                    "heading_2": {"rich_text": [{"type": "text", "text": {"content": f"🌱 {q}"}}]},
+                })
+                blocks.append(self._para(
+                    "이 분기에는 알림장이 없습니다.", color="gray",
+                ))
                 continue
             # Shrunk from 5000 chars (was timing out llama3.1:8b on CPU)
             joined = "\n".join(
@@ -3469,7 +3581,15 @@ class NotionMirror:
                 final_labels=("TOP 5:", "Top 5:"),
             )
             if not top:
-                _LOGGER.warning("interests for %s: empty LLM output, skipping", q)
+                _LOGGER.warning("interests for %s: empty LLM output, placeholder", q)
+                blocks.append({
+                    "object": "block", "type": "heading_2",
+                    "heading_2": {"rich_text": [{"type": "text", "text": {"content": f"🌱 {q}"}}]},
+                })
+                blocks.append(self._para(
+                    "이 분기의 관심사를 LLM이 만들지 못했습니다. 다음 force-refresh에서 다시 시도됩니다.",
+                    color="gray",
+                ))
                 continue
             blocks.append({
                 "object": "block",
@@ -3491,72 +3611,109 @@ class NotionMirror:
         reports: list[dict[str, Any]],
         child_name: str = "",
     ) -> dict[str, Any] | None:
-        """💌 선생님께 감사 카드. 1 LLM call from the whole year's
-        teacher-written alimnota → a draft thank-you letter."""
+        """💌 연도별 선생님께. One letter per year, each grounded in that
+        year's teacher-written alimnotas only.
+
+        Per 2026-05-22 user feedback the single-letter format made the
+        page misleading on multi-year backups (the previous "2026년
+        선생님께" was only writing about 2026 even when the data spanned
+        2018-2024). Now we group teacher alimnotas by year, call the LLM
+        once per year, and render newest year first.
+        """
         if _get_ollama() is None:
             return None
+        # Center staff: kidsnote uses both "teacher" (homeroom) and "admin"
+        # (원감/원장 — common at academies). Both write alimnotas that the
+        # parent receives; the previous filter only kept "teacher", which
+        # erased entire years for academy-only accounts (e.g. iibii_22's
+        # 2024 NCE 어학원 logs were all author.type=admin → no 2024 letter
+        # was generated).
         teacher_reports = [
             r for r in reports
-            if ((r.get("author") or {}).get("type") or "") == "teacher"
+            if ((r.get("author") or {}).get("type") or "") in ("teacher", "admin")
         ]
         if not teacher_reports:
             return None
-        # Most-recent first, take up to 15 with tight per-report quota.
-        # (Earlier code 60×300=8000 made model copy-paste; then 25×100=2500
-        # caused 10-min timeouts even at 600s. Now 15×80=1200 to fit CPU.)
-        teacher_reports = sorted(
-            teacher_reports, key=lambda r: r.get("date_written") or "", reverse=True,
-        )[:15]
-        joined = "\n".join(
-            "- " + (r.get("content") or "").strip()[:80]
-            for r in teacher_reports
-        )[:1500]
         given = _given_name(child_name) or "아이"
         topic = _topic_form(given)  # 하린→하린이 / 유주→유주
-        prompt = (
-            f"다음은 어린이집·학원 선생님이 자녀({given})에 대해 그동안 쓴 "
-            "알림장의 짧은 발췌야. 이를 바탕으로 부모가 선생님께 보낼 "
-            "감사 편지(4-5문장)를 한국어로 써. 발췌에 실제 등장한 활동·"
-            "에피소드 2-3개를 구체적으로 언급해.\n\n"
-            "**규칙**: ① 한국어만 사용. ② 발췌에 없는 활동/사건 추가 금지. "
-            "③ 다른 자녀 이름이 본문에 있어도 ``친구``로 표현. "
-            f"④ 데이터 기간이 정확히 1년이 아닐 수 있으므로 ``한 해 동안`` "
-            "대신 ``그동안`` 같은 표현 사용.\n\n"
-            "[예시]\n"
-            f"발췌:\n- {topic}가 친구에게 장난감을 양보함\n"
-            "- ``동물농장`` 노래에 박수\n- 송편 만들기에 참여\n"
-            f"편지: 선생님, 그동안 우리 {topic}를 사랑으로 돌봐주셔서 "
-            "진심으로 감사드립니다. 친구에게 장난감을 양보하는 사회성도, "
-            "``동물농장`` 노래에 박수를 치는 즐거움도, 송편을 만져보던 "
-            f"낯선 촉감의 기억까지, 모두 선생님 덕분에 우리 {topic}의 "
-            "소중한 추억이 되었습니다. 따뜻한 손길 잊지 않겠습니다.\n\n"
-            "[지금 작성할 감사 편지]\n"
-            f"발췌:\n{joined}\n"
-            "편지:"
-        )
-        # 1200s timeout — 600s also hit the wall on full-year context.
-        # Combined with shrunk input (15 bullets × 80 chars = 1200), this
-        # should land comfortably inside the budget.
-        letter = self._ask_ollama(
-            prompt, max_chars=900, num_predict=400, timeout=1200,
-            final_labels=("편지:", "감사 편지:"),
-        )
-        if not letter:
-            _LOGGER.warning("teacher thanks: ollama returned empty after timeout")
+
+        # Group by year, newest year first.
+        from collections import defaultdict as _dd
+        by_year: dict[str, list[dict[str, Any]]] = _dd(list)
+        for r in teacher_reports:
+            yr = (r.get("date_written") or "")[:4]
+            if len(yr) == 4 and yr.isdigit():
+                by_year[yr].append(r)
+        if not by_year:
             return None
+
         blocks: list[dict[str, Any]] = [{
             "object": "block",
             "type": "callout",
             "callout": {
                 "rich_text": [{"type": "text", "text": {
-                    "content": f"1년치 알림장 기반 감사 편지 초안. 졸업·연말 시 가족이 다듬어 사용.\n마지막 갱신: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                    "content": (
+                        "연도별 알림장 기반 감사 편지 초안 — 매 해의 알림장만 사용해 따로 작성합니다. "
+                        "졸업·연말 시 가족이 다듬어 사용.\n"
+                        f"마지막 갱신: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+                    ),
                 }}],
                 "icon": {"type": "emoji", "emoji": "💌"},
                 "color": "purple_background",
             },
         }]
-        for chunk in self._chunk(letter):
-            blocks.append(self._para(chunk))
+
+        for yr in sorted(by_year.keys(), reverse=True):
+            # Take up to 15 most recent excerpts in that year (80 chars each).
+            yr_reports = sorted(
+                by_year[yr], key=lambda r: r.get("date_written") or "", reverse=True,
+            )[:15]
+            joined = "\n".join(
+                "- " + (r.get("content") or "").strip()[:80]
+                for r in yr_reports
+            )[:1500]
+            prompt = (
+                f"다음은 어린이집·학원 선생님이 자녀({given})에 대해 {yr}년 한 해 동안 쓴 "
+                "알림장의 짧은 발췌야. 이를 바탕으로 부모가 선생님께 보낼 "
+                "감사 편지(4-5문장)를 한국어로 써. 발췌에 실제 등장한 활동·"
+                "에피소드 2-3개를 구체적으로 언급해.\n\n"
+                "**규칙**: ① 한국어만 사용. ② 발췌에 없는 활동/사건 추가 금지. "
+                "③ 다른 자녀 이름이 본문에 있어도 ``친구``로 표현.\n\n"
+                "[예시]\n"
+                f"발췌:\n- {topic}가 친구에게 장난감을 양보함\n"
+                "- ``동물농장`` 노래에 박수\n- 송편 만들기에 참여\n"
+                f"편지: 선생님, {yr}년 한 해 동안 우리 {topic}를 사랑으로 "
+                "돌봐주셔서 진심으로 감사드립니다. 친구에게 장난감을 양보하는 "
+                "사회성도, ``동물농장`` 노래에 박수를 치는 즐거움도, 송편을 "
+                f"만져보던 낯선 촉감의 기억까지, 모두 선생님 덕분에 우리 {topic}의 "
+                "소중한 추억이 되었습니다. 따뜻한 손길 잊지 않겠습니다.\n\n"
+                "[지금 작성할 감사 편지]\n"
+                f"발췌:\n{joined}\n"
+                "편지:"
+            )
+            letter = self._ask_ollama(
+                prompt, max_chars=900, num_predict=400, timeout=1200,
+                final_labels=("편지:", "감사 편지:"),
+            )
+            # Always render the year heading so empty-LLM years still show
+            # up as a visible gap with explanation.
+            blocks.append({
+                "object": "block",
+                "type": "heading_2",
+                "heading_2": {"rich_text": [{
+                    "type": "text",
+                    "text": {"content": f"📅 {yr}년"},
+                }]},
+            })
+            if not letter:
+                _LOGGER.warning("teacher thanks for %s: empty LLM, placeholder", yr)
+                blocks.append(self._para(
+                    f"{yr}년 감사 편지를 LLM이 만들지 못했습니다. 다음 force-refresh에서 다시 시도됩니다.",
+                    color="gray",
+                ))
+                continue
+            for chunk in self._chunk(letter):
+                blocks.append(self._para(chunk))
         return self._replace_singleton(
             self.TEACHER_THANKS_REPORT_ID, self._dashboard_title(self.TEACHER_THANKS_TITLE), blocks,
         )

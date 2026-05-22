@@ -924,24 +924,29 @@ def main(argv: list[str] | None = None) -> int:
             _LOGGER.warning("album fetch failed: %s", e)
 
     # ---- Notion mirror: year-interleaved publish ---------------------------
-    # User-requested ordering (2026-05-22): the default Notion view
+    # User-requested ordering (2026-05-22 revision 2): the default Notion view
     # (Created time descending) should show:
     #
     #     [통계 대시보드 7개]
-    #     2026년 공지 (newest first)
-    #     2026년 앨범 (newest first)
+    #     2026년 앨범 (newest first)         ← 가장 빠른 액세스
     #     2026년 알림장 (newest first)
-    #     2025년 공지
+    #     2026년 공지 (newest first)
     #     2025년 앨범
     #     2025년 알림장
+    #     2025년 공지
     #     ...
-    #     2018년 알림장 (oldest)
+    #     2018년 공지 (oldest)
     #
     # Because Notion `Created time desc` puts the LAST-published page at
     # the top, we publish in reverse: oldest year first, and within each
-    # year reports → albums → notices (so notices land last for that
+    # year `notices → reports → albums` (so albums land last for that
     # year → top of that year's block in the default view). Dashboards
     # are published after all data so they appear at the very top.
+    #
+    # Why this category order: the user wants alimnotas (daily activity)
+    # and albums (photo sets) close to the top because those get read
+    # repeatedly; notices (one-off center announcements) are referenced
+    # rarely so they sit at the bottom of each year.
     if mirror is not None:
         def _publish_report(detail: dict[str, Any], sess_: requests.Session) -> dict[str, Any]:
             # Same-day menu is only embedded into TEACHER posts (alimnota
@@ -983,12 +988,16 @@ def main(argv: list[str] | None = None) -> int:
             yr_reports = sorted(reports_by_year[_year], key=_chronological_key)
             yr_albums = sorted(albums_by_year[_year], key=_chronological_key)
             yr_notices = sorted(notices_by_year[_year], key=_chronological_key)
+            # Order within a year: notices → reports → albums. With Notion
+            # default Created-time-desc the LAST publish lands at the top,
+            # so albums end up on top inside each year, alimnotas in the
+            # middle, notices at the bottom.
+            if yr_notices:
+                _publish_batch(yr_notices, mirror.publish_notice, f"Notice {_year}")
             if yr_reports:
                 _publish_batch(yr_reports, _publish_report, f"Report {_year}")
             if yr_albums:
                 _publish_batch(yr_albums, mirror.publish_album, f"Album {_year}")
-            if yr_notices:
-                _publish_batch(yr_notices, mirror.publish_notice, f"Notice {_year}")
 
     # ---- Daily menus are NOT published as standalone pages.
     # ---- Same-day menus are inlined into the matching report (above).
@@ -1011,8 +1020,18 @@ def main(argv: list[str] | None = None) -> int:
     # ---- 📊 Stats dashboard ----
     if mirror is not None and reports:
         _LOGGER.info("📊 Dashboard: computing stats from %d reports...", len(reports))
-        from collections import Counter
+        from collections import Counter, defaultdict
         from notion_mirror import NotionMirror
+
+        def _new_year_bucket() -> dict[str, Counter]:
+            return {
+                "category": Counter(),
+                "monthly": Counter(),
+                "author": Counter(),
+                "sleep": Counter(),
+                "meal": Counter(),
+                "weather": Counter(),
+            }
 
         cat_counter: Counter[str] = Counter()
         monthly_counter: Counter[str] = Counter()
@@ -1020,21 +1039,40 @@ def main(argv: list[str] | None = None) -> int:
         sleep_counter: Counter[str] = Counter()
         meal_counter: Counter[str] = Counter()
         weather_counter: Counter[str] = Counter()
+        # Per-year breakdown — populated alongside the totals so the
+        # dashboard page renders both "전체 누적" and "연도별 상세" sections.
+        per_year: dict[str, dict[str, Counter]] = defaultdict(_new_year_bucket)
+        per_year_report_total: Counter[str] = Counter()
 
         for r in reports:
-            for c in NotionMirror._classify_categories(r.get("content") or ""):
+            yr = (r.get("date_written") or "")[:4]
+            cats = NotionMirror._classify_categories(r.get("content") or "")
+            for c in cats:
                 cat_counter[c] += 1
+                if yr:
+                    per_year[yr]["category"][c] += 1
             ym = (r.get("date_written") or "")[:7]
             if ym:
                 monthly_counter[ym] += 1
+                if yr:
+                    per_year[yr]["monthly"][ym] += 1
             atype = (r.get("author") or {}).get("type") or "unknown"
             author_counter[atype] += 1
+            if yr:
+                per_year[yr]["author"][atype] += 1
+                per_year_report_total[yr] += 1
             if r.get("sleep_hour"):
                 sleep_counter[r["sleep_hour"]] += 1
+                if yr:
+                    per_year[yr]["sleep"][r["sleep_hour"]] += 1
             if r.get("meal_status"):
                 meal_counter[r["meal_status"]] += 1
+                if yr:
+                    per_year[yr]["meal"][r["meal_status"]] += 1
             if r.get("weather"):
                 weather_counter[r["weather"]] += 1
+                if yr:
+                    per_year[yr]["weather"][r["weather"]] += 1
 
         att = {
             "images": sum(p.get("images_uploaded", 0) for p in publish_results),
@@ -1043,6 +1081,21 @@ def main(argv: list[str] | None = None) -> int:
             "files": sum(p.get("files_uploaded", 0) for p in publish_results),
             "files_skipped": sum(p.get("files_failed", 0) for p in publish_results),
         }
+
+        # Per-year stats payload (newest first)
+        per_year_payload: list[dict[str, Any]] = []
+        for yr in sorted(per_year.keys(), reverse=True):
+            buckets = per_year[yr]
+            per_year_payload.append({
+                "year": yr,
+                "reports_total": per_year_report_total[yr],
+                "category_counts": dict(buckets["category"]),
+                "monthly_report_counts": dict(buckets["monthly"]),
+                "author_counts": dict(buckets["author"]),
+                "sleep_hour_dist": dict(buckets["sleep"]),
+                "meal_status_dist": dict(buckets["meal"]),
+                "weather_dist": dict(buckets["weather"]),
+            })
 
         stats = {
             "reports_total": len(reports),
@@ -1056,6 +1109,7 @@ def main(argv: list[str] | None = None) -> int:
             "meal_status_dist": dict(meal_counter),
             "weather_dist": dict(weather_counter),
             "attachments": att,
+            "per_year": per_year_payload,
         }
         try:
             mirror.publish_dashboard(stats)
