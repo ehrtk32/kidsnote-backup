@@ -148,22 +148,34 @@ jobs:
 
       # ---- Ollama for body summary + LLM dashboards ----
       # Local LLM runs inside the runner — no API key / cost.
-      # llama3.1:8b (~4.7GB): chosen over qwen2.5:7b after the latter
-      # was caught (a) copy-pasting input as "child diary" instead of
-      # converting to 1st-person, (b) leaking instruction meta-phrases
-      # like "느껴지게" verbatim into output, (c) returning "없음" for
-      # every milestone candidate. llama3.1 has stronger
-      # instruction-following for the role-transformation tasks here.
+      #
+      # qwen2.5:14b-instruct-q4_K_M (~9GB): upgraded from llama3.1:8b on
+      # 2026-05-23 after production spot-check found persistent quality
+      # issues at 8B scale — 3rd-person leak in child diary, occasional
+      # task-restatement, awkward perspective on parent-written posts.
+      # The earlier rejection of qwen2.5:7b was specifically about its
+      # weak instruction following at 7B + Chinese-mixing tendency; the
+      # 14B has both fixed in newer training data, and we now have three
+      # defensive filters that catch any residual leaks:
+      #   - _strip_cjk         (rejects > 20% Chinese hanja)
+      #   - english_leak guard (rejects ASCII words ≥ 4 chars)
+      #   - input_copy guard   (rejects output that echoes input verbatim)
+      # If the 14b turns out worse in practice, revert by changing this
+      # cache key + OLLAMA_MODEL below back to llama3.1:8b.
+      #
+      # Sizing: 14B Q4 weighs ~8GB cached, ~9GB resident. Standard GHA
+      # runner is 16GB RAM / 14GB SSD → ~5GB headroom for Python+stack
+      # and the GHA cache 10GB limit (public repo) still holds.
       #
       # When `use_ai_features=false`, both steps below are skipped so
-      # AI-opt-out runs don't pay the ~5min model-pull cost.
+      # AI-opt-out runs don't pay the ~8min model-pull cost.
       - name: Cache Ollama models
         id: ollama-cache
         if: ${{ inputs.use_ai_features != 'false' }}
         uses: actions/cache@v4
         with:
           path: ~/.ollama
-          key: ollama-llama3.1-8b-v1
+          key: ollama-qwen2.5-14b-v1
 
       - name: Install Ollama + pull model
         if: ${{ inputs.use_ai_features != 'false' }}
@@ -181,8 +193,8 @@ jobs:
             fi
             sleep 1
           done
-          # Pull model (cached after first run)
-          ollama pull llama3.1:8b
+          # Pull model (cached after first run, ~8min first time)
+          ollama pull qwen2.5:14b-instruct-q4_K_M
 
       - name: Mirror Kidsnote → Notion
         env:
@@ -191,7 +203,7 @@ jobs:
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
           # Tell notion_mirror.py where Ollama lives + which model to use
           OLLAMA_HOST: "http://localhost:11434"
-          OLLAMA_MODEL: "llama3.1:8b"
+          OLLAMA_MODEL: "qwen2.5:14b-instruct-q4_K_M"
           PYTHONUNBUFFERED: "1"
           # ---- Multi-child / LLM-skip env passthrough ----
           # The user-facing inputs use the positive form (`use_ai_features`,

@@ -56,7 +56,7 @@
 > 노션 유료 플랜(파일당 5 GiB)이면 모두 업로드됩니다.
 
 > 🤖 **AI 가공 품질은 100% 완벽하지 않습니다**
-> 1인칭 일기·부모 편지·LLM 대시보드는 무료 로컬 모델(`llama3.1:8b`)로 만들어집니다. 사건 anchoring + CJK leak 필터 + 호격 자동 처리 등 안전장치를 넣어두긴 했지만, 가끔 어색한 문장이나 알림장에 없던 디테일이 섞일 수 있습니다.
+> 1인칭 일기·부모 편지·LLM 대시보드는 무료 로컬 모델(`qwen2.5:14b`)로 만들어집니다. 사건 anchoring + CJK·영어 leak 필터 + 호격 자동 처리 + 본문 verbatim 복사 차단 등 안전장치를 넣어두긴 했지만, 가끔 어색한 문장이나 알림장에 없던 디테일이 섞일 수 있습니다.
 > - **마음에 안 들면 한 번에 끄기**: `Run workflow` 화면에서 **`use_ai_features`** 를 **`false`**로 바꾸세요. 그러면 AI가 만드는 7가지(callout 3 + 대시보드 4)는 전부 안 만들어지고, 키즈노트 원본 + 통계 대시보드 3개만 깔끔하게 백업됩니다.
 > - **AI는 켜되 특정 페이지만 끄기**: `use_growth_story` / `use_milestones` / `use_interests` / `use_teacher_thanks` 각각 `false`로 개별 OFF. 자세한 가이드는 [B. AI 가공을 안 쓰고 단순 백업 + 통계만 원할 때](#b-ai-가공을-안-쓰고-단순-백업--통계만-원할-때) 섹션 참고.
 
@@ -231,7 +231,7 @@ LLM이 가끔 헛소리를 만드는 걸 막기 위해 코드 안에 세 가지 
 - 🥗 영양 분석 — **식단 정보가 있는 알림장이 1개 이상일 때만** (어학원 등 식단을 안 올리는 곳은 생성 안 됨)
 - 📖 / 🌟 / 🌱 / 💌 — Ollama LLM이 reachable + AI 토글이 켜진 경우 (모두 default `true`). `use_ai_features=false`로 통째로 끄거나 각각 `use_growth_story=false` 등으로 끄거나 Ollama 다운로드 실패 시 각각 skip
 
-> 💡 모든 LLM 호출은 **GitHub Actions 러너 안의 무료 Ollama**(`llama3.1:8b`)로 처리되어 외부 API 비용·노출이 없습니다.
+> 💡 모든 LLM 호출은 **GitHub Actions 러너 안의 무료 Ollama**(`qwen2.5:14b`)로 처리되어 외부 API 비용·노출이 없습니다.
 
 ---
 
@@ -737,7 +737,7 @@ NOTION_TOKEN                  Updated now
 - 동영상/파일 첨부물 있으면 OK
 - 7개 대시보드 페이지(📊 통계 / 📅 작년 추억 / 🥗 영양 / 📖 성장 스토리 / 🌟 마일스톤 / 🌱 관심사 / 💌 선생님께)가 함께 생성됨
 
-> 💡 **첫 실행은 왜 5분이 아니라 15분?**: GitHub Actions가 무료 Ollama 모델(`llama3.1:8b`, ~4.7GB)을 처음 다운로드하기 때문이에요. 두 번째 실행부터는 캐싱되어 ~30초 만에 시작합니다.
+> 💡 **첫 실행은 왜 5분이 아니라 15-20분?**: GitHub Actions가 무료 Ollama 모델(`qwen2.5:14b`, ~9GB)을 처음 다운로드하기 때문이에요(~8분). 두 번째 실행부터는 캐싱되어 ~30초 만에 시작합니다.
 
 > ⚠️ **limit=3일 때 대시보드는 빈약합니다** — 알림장이 3개뿐이라 LLM이 "성장 스토리"·"마일스톤" 같은 페이지를 의미 있게 만들기 어려워요. **셋업 검증용**으로만 보시고, 다음 8-3에서 전체 백업 돌리면 대시보드도 풍부해집니다.
 
@@ -747,13 +747,13 @@ NOTION_TOKEN                  Updated now
 
 > ⚠️ **첫 백업 시간** — `use_ai_features` 값에 따라 크게 차이납니다.
 >
-> **AI 켬** (기본값, `use_ai_features=true`) — 알림장당 LLM 호출 3회 + 4개 대시보드 LLM 생성
+> **AI 켬** (기본값, `use_ai_features=true`) — 알림장당 LLM 호출 3회 + 4개 대시보드 LLM 생성 (qwen2.5:14b, CPU)
 >
 > | 알림장 수 | 예상 시간 | run 횟수 |
 > |---|---|---|
-> | 50개 미만 (몇 달치) | 30분~2시간 | 1회 |
-> | 100~200개 (반년) | 4~10시간 | 1~2회 |
-> | 300~400개 (1년치) + 사진 많음 | **10~25시간** | **2~5회** |
+> | 50개 미만 (몇 달치) | 1~3시간 | 1회 |
+> | 100~200개 (반년) | 8~20시간 | 2~4회 |
+> | 300~400개 (1년치) + 사진 많음 | **20~50시간** | **4~10회** |
 >
 > **AI 끔** (`use_ai_features=false`) — Ollama 다운로드 + LLM 호출 모두 skip, 사진 업로드 시간이 대부분
 >
@@ -1373,7 +1373,7 @@ GitHub Issues 페이지에 질문을 올려주세요: https://github.com/redchup
 - GitHub Actions (ubuntu-latest, 단일 job 6h hard-cap)
 - Notion API `2022-06-28` (`file_uploads` + `databases` + 100-children chunked PATCH)
 - 키즈노트 비공식 API `/api/v1_2/children/<id>/reports/`
-- **Ollama** on the runner (`llama3.1:8b`, CPU-only) — 7개 대시보드 중 LLM 4개 생성에 사용. 모델·바이너리는 `actions/cache@v4`로 영구 캐싱
+- **Ollama** on the runner (`qwen2.5:14b-instruct-q4_K_M`, CPU-only) — 7개 대시보드 중 LLM 4개 생성에 사용. 모델·바이너리는 `actions/cache@v4`로 영구 캐싱
 
 **핵심 코드** ([`tools/kidsnote_fetch/`](tools/kidsnote_fetch/), 약 4000줄):
 - `fetch.py` — 키즈노트 API 호출 + 메인 로직 + dashboard 라우팅
@@ -1382,8 +1382,8 @@ GitHub Issues 페이지에 질문을 올려주세요: https://github.com/redchup
 
 **LLM 파이프라인**:
 - kiwipiepy → 알림장 본문에서 명사 추출, 제목 키워드 자동 생성
-- llama3.1:8b → 자녀 일기 1인칭 변환, 부모 편지, 4개 대시보드 (성장 스토리/마일스톤/관심사/연도별 선생님께)
-- 후처리: `_strip_lead_meta` (메타 lead-in 자동 제거), `_strip_cjk` (한자 누수 차단, >20%면 reject), `_extract_after_final_label` (분석+본문 분리), few-shot 예시 누수 가드, 명사구/문장형 자동 분류
+- qwen2.5:14b → 자녀 일기 1인칭 변환, 부모 편지, 4개 대시보드 (성장 스토리/마일스톤/관심사/연도별 선생님께)
+- 후처리: `_strip_lead_meta` (메타 lead-in 자동 제거), `_strip_cjk` (한자 누수 차단, >20%면 reject), `_english_word_leak_ratio` (영어 단어 leak 차단), `_looks_like_input_copy` (본문 verbatim 복사 차단 — PII 보호), `_extract_after_final_label` (분석+본문 분리), few-shot 예시 누수 가드, 명사구/문장형 자동 분류, 실패 시 1회 retry (temperature+0.25)
 
 **옵션 플래그**:
 - `monthly_sample=true` — 디버그용 월별 1개 알림장만 처리 (단위 테스트)
