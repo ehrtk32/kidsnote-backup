@@ -221,11 +221,19 @@ def _strip_lead_meta(text: str) -> str:
     # sometimes invents a paraphrase ("작성해보도록 하겠습니다") that
     # the literal list misses. A short opening line + one of these endings
     # is essentially always a meta sentence.
+    #
+    # 2026-05-24: added past-tense "결과입니다 / 결과예요" — production
+    # shipped "알림장 내용을 일기로 변환한 결과입니다." as a leak that
+    # neither TASK_VERBS (no verb match) nor the live-future markers
+    # (보겠습니다 etc) caught. The past-participle form is just another
+    # way the model paraphrases the restatement.
     META_ENDINGS = (
         "보겠습니다.", "보겠습니다", "보겠어요.", "보겠어요",
         "드리겠습니다.", "드리겠습니다", "드리겠어요.", "드리겠어요",
         "드릴게요.", "드릴게요", "드릴게.",
         "봅니다.", "봅니다",
+        "결과입니다.", "결과입니다", "결과예요.", "결과예요",
+        "결과입니다!", "결과입니다 ", "변환한 결과", "정리한 결과",
     )
     lines = text.split("\n")
     out: list[str] = []
@@ -877,39 +885,57 @@ class NotionMirror:
             mime = "application/octet-stream"
             send_name = filename_hint
 
-        try:
-            # Step 1 — open an upload handle.
-            r = self.session.post(
-                f"{NOTION_API}/file_uploads",
-                headers=self._headers(),
-                json={},
-                timeout=self.timeout,
-            )
-            r.raise_for_status()
-            handle = r.json()
-            upload_url = handle["upload_url"]
-            file_upload_id = handle["id"]
-        except Exception as e:
-            _LOGGER.warning("file_uploads create failed for %s: %s", filename_hint, e)
-            return None
+        # Retry the whole create+PUT cycle when the upload_url expires
+        # mid-publish. Production logs (2026-05-23) showed many 403s on
+        # the upload_url several minutes after creation — the previous
+        # alimnota's slow LLM callouts let the signed URL go stale. By
+        # retrying the create step on PUT failure, the second attempt
+        # gets a fresh URL and usually succeeds.
+        last_err: Exception | None = None
+        for attempt in (1, 2):
+            try:
+                # Step 1 — open an upload handle.
+                r = self.session.post(
+                    f"{NOTION_API}/file_uploads",
+                    headers=self._headers(),
+                    json={},
+                    timeout=self.timeout,
+                )
+                r.raise_for_status()
+                handle = r.json()
+                upload_url = handle["upload_url"]
+                file_upload_id = handle["id"]
+            except Exception as e:
+                last_err = e
+                if attempt == 1:
+                    continue  # transient network — retry once
+                _LOGGER.warning("file_uploads create failed for %s: %s", filename_hint, e)
+                return None
 
-        try:
-            # Step 2 — POST the actual bytes (multipart).
-            r = self.session.post(
-                upload_url,
-                headers={
-                    "Authorization": f"Bearer {self.token}",
-                    "Notion-Version": NOTION_VERSION,
-                },
-                files={"file": (send_name, io.BytesIO(data), mime)},
-                timeout=self.timeout * 3,
-            )
-            r.raise_for_status()
-        except Exception as e:
-            _LOGGER.warning("file upload PUT failed for %s: %s", filename_hint, e)
-            return None
-
-        return file_upload_id
+            try:
+                # Step 2 — POST the actual bytes (multipart).
+                r = self.session.post(
+                    upload_url,
+                    headers={
+                        "Authorization": f"Bearer {self.token}",
+                        "Notion-Version": NOTION_VERSION,
+                    },
+                    files={"file": (send_name, io.BytesIO(data), mime)},
+                    timeout=self.timeout * 3,
+                )
+                r.raise_for_status()
+                return file_upload_id
+            except Exception as e:
+                last_err = e
+                if attempt == 1:
+                    _LOGGER.info(
+                        "image upload retry for %s (attempt 1 → %s)",
+                        filename_hint, type(e).__name__,
+                    )
+                    continue
+                _LOGGER.warning("file upload PUT failed for %s: %s", filename_hint, e)
+                return None
+        return None
 
     # ----------------------------------------------------------- video / file upload
 
