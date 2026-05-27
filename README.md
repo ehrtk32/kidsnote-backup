@@ -902,9 +902,9 @@ NOTION_TOKEN                  Updated now
 1. **알림장·공지·앨범·식단 publish** — 새 페이지 생성 (시간 大, 사진 업로드 포함)
 2. **6개 대시보드 자동 생성** — 통계/영양 + 4개 LLM 페이지 (성장 스토리/마일스톤/관심사/연도별 선생님께). 새 알림장이 publish되면 LLM 대시보드도 자동 갱신
 
-> 💡 **`force_refresh` 옵션** (고급): 코드 업데이트 후 기존 알림장의 callout(자녀 일기/부모 편지)도 새 LLM prompt로 다시 만들고 싶으면, `Run workflow`에서 `force_refresh`를 `true`로 설정. **첫 백업과 동일한 시간 소요** (모든 페이지를 archive 후 재발행). 마찬가지로 4시간 cron 자동 재개로 끝까지 진행됨.
+> 💡 **`force_refresh` 옵션** (고급): 코드 업데이트 후 기존 알림장의 callout(자녀 일기/부모 편지)도 새 LLM prompt로 다시 만들고 싶으면, `Run workflow`에서 `force_refresh`를 `on`으로 설정. **첫 백업과 동일한 시간 소요** (모든 페이지를 archive 후 재발행). 마찬가지로 cron 자동 재개로 끝까지 진행됨.
 >
-> 일반 사용자는 `force_refresh=false` (기본값)로 충분합니다.
+> 일반 사용자는 `force_refresh=off` (기본값)로 충분합니다.
 
 > 🔕 **cron 자동 트리거를 끄고 싶다면** (예: 가끔만 수동으로 돌리고 싶음): fork repo → `Actions` 탭 → 좌측 `Kidsnote → Notion mirror` 클릭 → 우측 `⋯` → `Disable workflow` 클릭 시 cron + 수동 트리거 모두 비활성화.
 
@@ -1092,8 +1092,8 @@ Selected child: id=1173370 name=우하린 (override with --child-id / --child-na
 ```
 Run workflow ▾
 ├─ limit:               [비워둠]
-├─ monthly_sample:      false   (기본값 — 전체 백업)
-├─ force_refresh:       false   (기본값)
+├─ monthly_sample:      off     (기본값 — 전체 백업)
+├─ force_refresh:       off     (기본값)
 ├─ child_name:          [비워둠 또는 자녀 이름]
 ├─ use_ai_features:     off     ← 🚦 기본값. AI OFF.
 ├─ use_growth_story:    on      (의미 없음 — 위가 off면 무시)
@@ -1418,7 +1418,7 @@ _ 💌 연도별 선생님께                 ┘
 
 1. Sync fork 완료 후
 2. **`Actions`** → **`Kidsnote → Notion mirror`** → **`Run workflow`**
-3. **`force_refresh`** 를 **`true`** 로 변경 → 녹색 버튼 클릭
+3. **`force_refresh`** 를 **`on`** 으로 변경 → 녹색 버튼 클릭
 4. 첫 백업과 같은 시간(18~30시간) 소요. cron 자동 재개로 끝까지 진행됨
 
 > ⚠️ **force_refresh를 켤지 결정하는 기준**: 이미 노션에 잘 채워져 있고 큰 불만 없으면 그냥 둬도 됩니다. 새 prompt가 기존 callout을 더 좋게 만든다는 확신이 있을 때만 force_refresh.
@@ -1630,8 +1630,8 @@ GitHub Issues 페이지에 질문을 올려주세요: https://github.com/redchup
 - 후처리: `_strip_lead_meta` (메타 lead-in 자동 제거), `_strip_cjk` (한자 누수 차단, >20%면 reject), `_english_word_leak_ratio` (영어 단어 leak 차단), `_looks_like_input_copy` (본문 verbatim 복사 차단 — PII 보호), `_extract_after_final_label` (분석+본문 분리), few-shot 예시 누수 가드, 명사구/문장형 자동 분류, 실패 시 1회 retry (temperature+0.25)
 
 **옵션 플래그**:
-- `monthly_sample=true` — 디버그용 월별 1개 알림장만 처리 (단위 테스트)
-- `force_refresh=true` — 기존 노션 페이지를 archive 후 재발행 (prompt 개선 후 기존 데이터 갱신용)
+- `monthly_sample=on` — 디버그용 월별 1개 알림장만 처리 (단위 테스트)
+- `force_refresh=on` — 기존 노션 페이지를 archive 후 재발행 (prompt 개선 후 기존 데이터 갱신용)
 
 워크플로 정의: [`.github/workflows/kidsnote-to-notion.yml`](.github/workflows/kidsnote-to-notion.yml)
 

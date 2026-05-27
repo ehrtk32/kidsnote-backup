@@ -31,17 +31,17 @@ on:
         required: false
         default: ""
       monthly_sample:
-        description: "테스트 모드 — 매월 알림장 1개씩만 처리 (셋업 검증·빠른 확인용. 평소엔 false)"
+        description: "🧪 빠른 확인 모드 — 매달 알림장 1개씩만 받아서 셋업이 잘 됐는지 5분 안에 보고 싶을 때. 평소엔 off."
         required: false
-        default: "false"
+        default: "off"
         type: choice
-        options: ["false", "true"]
+        options: ["off", "on"]
       force_refresh:
-        description: "기존 노션 페이지 모두 archive 후 처음부터 재발행 (코드 업데이트·prompt 개선 후 사용. 평소엔 false)"
+        description: "🔄 처음부터 다시 — 노션에 있는 알림장 페이지를 전부 지우고 새로 받기. AI 품질 개선 후 옛날 페이지에도 적용하고 싶을 때만. 평소엔 off."
         required: false
-        default: "false"
+        default: "off"
         type: choice
-        options: ["false", "true"]
+        options: ["off", "on"]
       # ---- Multi-child accounts ----
       # If your kidsnote account has more than one child, the script needs
       # to know which one to mirror. The sessionid cookie itself isn't
@@ -256,10 +256,10 @@ jobs:
           if [ -n "${{ inputs.limit }}" ]; then
             ARGS+=( "--limit" "${{ inputs.limit }}" )
           fi
-          if [ "${{ inputs.monthly_sample }}" = "true" ]; then
+          if [ "${{ inputs.monthly_sample }}" = "on" ]; then
             ARGS+=( "--monthly-sample" )
           fi
-          if [ "${{ inputs.force_refresh }}" = "true" ]; then
+          if [ "${{ inputs.force_refresh }}" = "on" ]; then
             ARGS+=( "--force-refresh" )
           fi
           python tools/kidsnote_fetch/fetch.py "${ARGS[@]}"
