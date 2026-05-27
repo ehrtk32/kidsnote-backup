@@ -63,8 +63,17 @@ on:
       # 대시보드 4종) flip to ``on``. on/off chosen over true/false
       # because operators consistently confused the inverted
       # disable-vs-enable polarity in support reports.
+      #
+      # ``default_or_repo_var`` option: when the operator wants AI on
+      # but doesn't want to flip it every time they Run workflow, they
+      # can set a repository variable ``AI_FEATURES=on`` (Settings →
+      # Secrets and variables → Actions → Variables tab). The
+      # workflow body falls back to that variable when this input is
+      # left at its default. This is also what cron schedule events
+      # see — the ``inputs`` context is empty on schedule, so without
+      # this fallback the 4 LLM dashboards never regenerate on cron.
       use_ai_features:
-        description: "AI 가공 — 알림장 안(💭요약·🧒자녀일기·👨‍👩‍👧부모편지) + 별도 페이지 4개(📖성장스토리·🌟마일스톤·🌱관심사·💌선생님께). 기본 off — 빠른 백업. 켜려면 on (느려짐 — 1년치 30시간+)"
+        description: "AI 가공 — 알림장 안(💭요약·🧒자녀일기·👨‍👩‍👧부모편지) + 별도 페이지 4개(📖성장스토리·🌟마일스톤·🌱관심사·💌선생님께). 기본 off / cron도 따라 off. 항상 on으로 돌리고 싶으면 repo Variables에 AI_FEATURES=on 추가."
         required: false
         default: "off"
         type: choice
@@ -163,16 +172,35 @@ jobs:
       #
       # When `use_ai_features=false`, both steps below are skipped so
       # AI-opt-out runs don't pay the ~5min model-pull cost.
+      # ``effective_ai`` resolves the master AI toggle for BOTH manual
+      # dispatch AND cron schedule. On schedule events ``inputs.*`` is
+      # empty (since no one filled the form), so we fall back to the
+      # repo variable ``AI_FEATURES``. Set that variable to ``on`` once
+      # if you want cron to keep regenerating the 4 LLM dashboards.
+      - name: Resolve effective AI toggle
+        id: ai
+        env:
+          INPUT_AI: ${{ inputs.use_ai_features }}
+          REPO_VAR_AI: ${{ vars.AI_FEATURES }}
+        run: |
+          if [ "$INPUT_AI" = "on" ]; then
+            echo "value=on" >> "$GITHUB_OUTPUT"
+          elif [ -z "$INPUT_AI" ] && [ "$REPO_VAR_AI" = "on" ]; then
+            echo "value=on" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=off" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Cache Ollama models
         id: ollama-cache
-        if: ${{ inputs.use_ai_features == 'on' }}
+        if: ${{ steps.ai.outputs.value == 'on' }}
         uses: actions/cache@v4
         with:
           path: ~/.ollama
           key: ollama-llama3.1-8b-v2
 
       - name: Install Ollama + pull model
-        if: ${{ inputs.use_ai_features == 'on' }}
+        if: ${{ steps.ai.outputs.value == 'on' }}
         run: |
           if ! command -v ollama >/dev/null 2>&1; then
             curl -fsSL https://ollama.com/install.sh | sh
@@ -207,10 +235,12 @@ jobs:
           # ternary expressions instead of renaming everything downstream.
           KIDSNOTE_CHILD_NAME: ${{ inputs.child_name }}
           # 2026-05-27: on/off semantics + default off for use_ai_features.
-          # Master: DISABLE=true (off) unless explicitly set to 'on'.
-          # Individual dashboards: DISABLE=true only when explicitly 'off'
-          # (default 'on' keeps them enabled if master is also 'on').
-          DISABLE_ALL_LLM: ${{ inputs.use_ai_features == 'on' && 'false' || 'true' }}
+          # Master: uses ``steps.ai.outputs.value`` so cron schedule also
+          # honours the repo Variable AI_FEATURES (inputs.* is empty on
+          # schedule events). Individual dashboards: DISABLE=true only
+          # when explicitly 'off' (default 'on' keeps them enabled if
+          # master is also 'on').
+          DISABLE_ALL_LLM: ${{ steps.ai.outputs.value == 'on' && 'false' || 'true' }}
           DISABLE_GROWTH_STORY: ${{ inputs.use_growth_story == 'off' && 'true' || 'false' }}
           DISABLE_MILESTONES: ${{ inputs.use_milestones == 'off' && 'true' || 'false' }}
           DISABLE_INTERESTS: ${{ inputs.use_interests == 'off' && 'true' || 'false' }}

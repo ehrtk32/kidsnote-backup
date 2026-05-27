@@ -2946,8 +2946,11 @@ class NotionMirror:
     #   _2 알림장
     #   _1 공지
     DASHBOARD_TITLE = "_5 📊 통계 대시보드"
-    MEMORIES_REPORT_ID = -2
-    MEMORIES_TITLE = "_5 📅 작년추억"
+    # MEMORIES (📅 작년추억) was removed 2026-05-27 — feature retired by
+    # user request: most accounts didn't have multi-year backups yet so
+    # the page was almost always empty, and the page only refreshed once
+    # per cron cycle so it was rarely useful as a daily widget. Reserved
+    # ID -2 stays burned to avoid clashing if anyone re-introduces it.
     NUTRITION_REPORT_ID = -3
     NUTRITION_TITLE = "_5 🥗 영양 분석"
     # LLM-driven storytelling pages (auto-skip when Ollama isn't reachable)
@@ -3235,118 +3238,6 @@ class NotionMirror:
 
         return blocks
 
-
-    # ----------------------------------------------------------- "오늘의 추억"
-
-    def publish_memories(
-        self,
-        today_iso: str,
-        memories_by_year: dict[int, list[dict[str, Any]]],
-    ) -> dict[str, Any] | None:
-        """Replace the singleton ``📅 오늘의 추억`` page with same-day alimnota
-        from previous years.
-
-        ``memories_by_year`` keys are year integers (e.g. 2025), values are
-        lists of report dicts with at least {id, date_written, content,
-        author_name, author.type}. When empty (no prior data), the page is
-        still refreshed with an explanatory message.
-        """
-        existing = self._find_singleton_page(self.MEMORIES_REPORT_ID)
-        if existing:
-            self._archive_page(existing)
-
-        blocks: list[dict[str, Any]] = []
-        # Header callout
-        blocks.append({
-            "object": "block",
-            "type": "callout",
-            "callout": {
-                "rich_text": [{"type": "text", "text": {
-                    "content": f"오늘 ({today_iso})에 작년·재작년 같은 날에 있었던 알림장입니다.\n"
-                                "이 페이지를 모바일 노션 앱에 즐겨찾기해두면 매일 자동으로 갱신됩니다.",
-                }}],
-                "icon": {"type": "emoji", "emoji": "📅"},
-                "color": "yellow_background",
-            },
-        })
-
-        if not memories_by_year:
-            blocks.append({
-                "object": "block",
-                "type": "paragraph",
-                "paragraph": {"rich_text": [{
-                    "type": "text",
-                    "text": {"content": "작년 이 날짜에는 백업된 알림장이 없습니다. 1년 후에 다시 와주세요!"},
-                }]},
-            })
-        else:
-            # Group by year descending (most recent year first)
-            for year in sorted(memories_by_year.keys(), reverse=True):
-                items = memories_by_year[year]
-                if not items:
-                    continue
-                blocks.append({
-                    "object": "block",
-                    "type": "heading_2",
-                    "heading_2": {"rich_text": [{
-                        "type": "text",
-                        "text": {"content": f"📅 {year}년 같은 날"},
-                    }]},
-                })
-                for it in items:
-                    page_id = it.get("notion_page_id")
-                    title = it.get("notion_title") or it.get("date_written") or ""
-                    if page_id:
-                        # Notion page mention — title auto-rendered + clickable
-                        blocks.append({
-                            "object": "block",
-                            "type": "paragraph",
-                            "paragraph": {"rich_text": [{
-                                "type": "mention",
-                                "mention": {"type": "page", "page": {"id": page_id}},
-                            }]},
-                        })
-                    else:
-                        # Fallback: plain text with title
-                        blocks.append({
-                            "object": "block",
-                            "type": "paragraph",
-                            "paragraph": {"rich_text": [{
-                                "type": "text",
-                                "text": {"content": title},
-                            }]},
-                        })
-
-        # Build properties + create page
-        self._resolve_schema()
-        assert self._prop_title is not None and self._prop_report_id is not None
-        properties: dict[str, Any] = {
-            self._prop_title: {
-                "title": [{"text": {"content": self._dashboard_title(self.MEMORIES_TITLE)}}],
-            },
-            self._prop_report_id: {"number": self.MEMORIES_REPORT_ID},
-        }
-        if self._prop_date:
-            properties[self._prop_date] = {
-                "date": {"start": datetime.now().date().isoformat()},
-            }
-        payload = {
-            "parent": {"database_id": self.database_id},
-            "properties": properties,
-            "children": blocks,
-        }
-        try:
-            r = self.session.post(
-                f"{NOTION_API}/pages",
-                headers=self._headers(),
-                json=payload,
-                timeout=self.timeout,
-            )
-            r.raise_for_status()
-            return r.json()
-        except Exception as e:
-            _LOGGER.warning("memories publish failed: %s", e)
-            return None
 
     # ----------------------------------------------------------- 영양 분석
 

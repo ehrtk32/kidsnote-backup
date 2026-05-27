@@ -1170,70 +1170,8 @@ def main(argv: list[str] | None = None) -> int:
         import time as _t
         _t.sleep(0.5)
 
-    # ---- 📅 오늘의 추억 (Phase 2) ----
-    if mirror is not None:
-        from datetime import datetime as _dt
-        today = _dt.now().date()
-        today_md = today.strftime("%m-%d")
-        memories_by_year: dict[int, list[dict[str, Any]]] = {}
-        _LOGGER.info("📅 Memories: scanning Notion DB for same-day (%s) pages...", today_md)
-
-        # Query the entire Notion DB once to find same-MM-DD alimnota
-        # pages from prior years.
-        try:
-            cur: str | None = None
-            while True:
-                body: dict[str, Any] = {"page_size": 100}
-                if cur:
-                    body["start_cursor"] = cur
-                rq = mirror.session.post(
-                    f"https://api.notion.com/v1/databases/{mirror.database_id}/query",
-                    headers=mirror._headers(),
-                    json=body,
-                    timeout=mirror.timeout,
-                )
-                rq.raise_for_status()
-                data = rq.json()
-                for page in data.get("results") or []:
-                    props = page.get("properties") or {}
-                    # Look up date + title + report_id by their resolved names
-                    if not mirror._prop_date or not mirror._prop_title or not mirror._prop_report_id:
-                        continue
-                    rid_obj = (props.get(mirror._prop_report_id) or {})
-                    rid = rid_obj.get("number")
-                    if rid is None or rid < 0:
-                        continue  # skip system pages (dashboard / memories / nutrition)
-                    date_obj = (props.get(mirror._prop_date) or {}).get("date") or {}
-                    page_date = date_obj.get("start") or ""
-                    if not page_date or len(page_date) < 10:
-                        continue
-                    if page_date[5:10] != today_md:
-                        continue
-                    year = int(page_date[:4])
-                    if year == today.year:
-                        continue  # skip today's own
-                    title_rt = (props.get(mirror._prop_title) or {}).get("title") or []
-                    title_text = "".join(seg.get("plain_text", "") for seg in title_rt)
-                    memories_by_year.setdefault(year, []).append({
-                        "notion_page_id": page["id"],
-                        "notion_title": title_text,
-                        "date_written": page_date,
-                    })
-                if not data.get("has_more"):
-                    break
-                cur = data.get("next_cursor")
-        except Exception as e:
-            _LOGGER.warning("memories query failed: %s", e)
-
-        try:
-            mirror.publish_memories(today.isoformat(), memories_by_year)
-            n = sum(len(v) for v in memories_by_year.values())
-            _LOGGER.info("📅 Memories page updated (%d entries across %d year(s))",
-                         n, len(memories_by_year))
-        except Exception as e:
-            _LOGGER.warning("memories publish failed: %s", e)
-        import time as _t
-        _t.sleep(0.5)
+    # 📅 작년추억 (Phase 2) was removed 2026-05-27 — see notion_mirror.py
+    # MEMORIES_REPORT_ID comment for rationale.
 
     # ---- 🥗 영양 분석 (Phase 3) ----
     if mirror is not None and menus_fetched:
