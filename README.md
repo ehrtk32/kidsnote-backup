@@ -980,32 +980,35 @@ GitHub Actions는 종종 네트워크 이슈로 중간에 멈출 수 있어요. 
 
 <a id="a-자녀가-둘-이상이면-노션-db도-통합도-자녀별로-따로-만들어야-합니다"></a>
 
-## A. 자녀가 둘 이상이면 — **노션 DB도 통합도 자녀별로 따로 만들어야 합니다**
+## A. 자녀가 여러 명이면 — **Fork 자녀별로 만들기 (병렬로 ~2배 빠름)**
 
-키즈노트 계정에 자녀가 여럿이면 워크플로는 기본적으로 **API가 첫 번째로 반환한 자녀**만 백업합니다. 키즈노트 웹에서 "자녀 전환"하고 쿠키를 다시 추출해도 — 쿠키가 자녀별로 다르지 않아서 — 결과가 바뀌지 않아요. 자녀별로 백업하려면 **DB·통합·시크릿을 각각 따로 셋업**해야 합니다.
-
-<a id="가장-중요한-원칙"></a>
+키즈노트 계정에 자녀가 N명 (쌍둥이·형제·자매)이면, 각 자녀를 **별도 GitHub fork에서 병렬 백업**하는 것이 가장 빠릅니다. GitHub Actions runner는 fork별로 따로 돌기 때문에, 같은 시간에 자녀 N명을 동시에 백업할 수 있어요 (1년치 25시간 → 자녀 2명일 때 ~25시간 그대로, 한 fork에 몰아 sequential로 50시간 vs).
 
 ### 🚨 가장 중요한 원칙
 
+자녀별로 **모든 것을 따로** 만듭니다:
+
 | 항목 | 자녀 #1 | 자녀 #2 |
 |---|---|---|
+| **GitHub fork** | `내아이디/kidsnote-backup` | `내아이디/kidsnote-backup-2nd` |
 | 노션 DB | 별도 1개 | 별도 1개 |
 | 노션 통합(Integration) | 별도 1개 | 별도 1개 |
 | 통합 → DB 연결 | 통합 #1 → DB #1 | 통합 #2 → DB #2 |
-| GitHub 시크릿 (`NOTION_TOKEN`/`DATABASE_ID`) | 통합 #1 토큰 + DB #1 ID | 통합 #2 토큰 + DB #2 ID |
-| `child_name` workflow input | 비워둠 or 자녀 #1 이름 | **자녀 #2 이름 (예: `유주`)** |
+| Fork 시크릿 `NOTION_TOKEN` | 통합 #1 토큰 | 통합 #2 토큰 |
+| Fork 시크릿 `NOTION_DATABASE_ID` | DB #1 ID | DB #2 ID |
+| Fork 시크릿 `KIDSNOTE_SESSION_COOKIE` | 같은 쿠키 (공유 가능) | 같은 쿠키 |
+| Fork 시크릿 `KIDSNOTE_CHILD_NAME` | 첫째 이름 (예: `하린`) | 둘째 이름 (예: `혁주`) |
 
 > 💡 **같은 DB에 두 아이를 섞으면 안 되는 이유**: 📊 통계 / 📅 작년 추억 / 🥗 영양 / 📖 성장 스토리 등 모든 대시보드가 "한 아이 기준"으로 만들어집니다. 두 아이의 알림장이 한 DB에 들어가면 그래프가 두 아이를 합산해 의미가 사라져요.
 
-<a id="자녀-2-셋업-단계-자녀-1-기준-셋업이-이미-끝났다고-가정"></a>
+> 💡 **왜 fork 2개가 fork 1개 + 시크릿 교체보다 빠른가**: GitHub Actions runner는 fork별로 따로 할당됩니다. Fork 2개 = 두 자녀가 **같은 시간에 동시 백업**. Fork 1개 + secret 갈아끼우기 = 첫째 끝나야 둘째 시작 (sequential). 자녀 2명이면 ~2배, 3명이면 ~3배 차이.
 
 ### 📋 자녀 #2 셋업 단계 (자녀 #1 기준 셋업이 이미 끝났다고 가정)
 
-자녀 #1 셋업과 **완전히 똑같은 흐름을 한 번 더** 합니다. 다만 GitHub fork는 다시 만들 필요 없고, 노션 쪽만 새로 만들면 됩니다.
+자녀 #1 셋업 + **GitHub fork와 노션 쪽을 한 번 더** 만듭니다. 키즈노트 계정·쿠키는 공유 가능.
 
 #### Step 1. 자녀 #2용 새 노션 DB 만들기
-[**2단계**](#2단계-노션에-백업용-데이터베이스-만들기)를 그대로 한 번 더 합니다. 페이지 제목은 `키즈노트 백업 - 자녀이름2` 같이 구분되게 지으면 좋아요. 컬럼 추가 단계(2-3)도 그대로 — 기본 속성 두 개 + `날짜` + `Report ID`.
+[**2단계**](#2단계-노션에-백업용-데이터베이스-만들기)를 그대로 한 번 더 합니다. 페이지 제목은 `키즈노트 백업 - 둘째이름` 같이 구분되게 지으면 좋아요. 컬럼 추가 단계(2-3)도 그대로 — 기본 속성 두 개 + `날짜` + `Report ID`.
 
 #### Step 2. 자녀 #2용 새 노션 통합(Integration) 만들기
 [**3단계**](#3단계-노션-통합-integration-만들기-토큰-받기)를 한 번 더 합니다. 통합 이름은 `kidsnote-backup-child2` 같이 구분되게 지으세요. **새 토큰**(`ntn_...`)이 발급됩니다 — 이게 자녀 #2 전용 토큰입니다.
@@ -1013,58 +1016,60 @@ GitHub Actions는 종종 네트워크 이슈로 중간에 멈출 수 있어요. 
 > ⚠️ **자녀 #1 통합과 자녀 #2 통합은 서로 다른 토큰**이어야 합니다. 한 통합을 두 DB에 연결하는 것도 기술적으로 가능하지만, 권한 사고가 났을 때 격리하기 어려우므로 권장하지 않아요.
 
 #### Step 3. 자녀 #2 통합을 자녀 #2 DB에 연결
-[**4단계**](#4단계-노션-db에-통합-연결하기)를 자녀 #2 DB 페이지에서 한 번 더 합니다. 검색창에 `kidsnote-backup-child2` (또는 Step 2에서 정한 이름) 입력 → `페이지에 추가`.
+[**4단계**](#4단계-노션-db에-통합-연결하기)를 자녀 #2 DB 페이지에서 한 번 더 합니다.
 
 #### Step 4. 자녀 #2 DB ID 추출
 [**5단계**](#5단계-노션-db-id-복사하기)를 자녀 #2 DB에서 한 번 더 합니다.
 
 🚨 **여기서 사용자들이 가장 많이 함정에 빠집니다**: 5-1의 **↗ 풀화면 단계**를 반드시 거쳐서, URL이 `?v=뷰ID`를 포함한 형태가 된 다음에 ID를 복사하세요. `?v=` 가 없으면 부모 페이지 ID가 잡혀서 워크플로가 **`400 Bad Request — is a page, not a database`** 에러로 죽습니다.
 
-<a id="자녀-2-워크플로-실행-두-가지-방법"></a>
+#### Step 5. 자녀 #2용 새 fork 만들기
+1. [github.com/redchupa/kidsnote-backup](https://github.com/redchupa/kidsnote-backup) 접속 (원본 repo)
+2. 우측 상단 **`Fork`** 클릭 → **`Create a new fork`** 화면
+3. **`Repository name`** 칸에 자녀 #2용 이름 입력 (기본값을 변경해야 함):
+   - 예: `kidsnote-backup-2nd`, `kidsnote-backup-혁주`, `kidsnote-backup-child2`
+   - 첫 번째 fork(`kidsnote-backup`)와 이름이 달라야 GitHub이 허용
+4. **`Create fork`** 클릭
 
-### 🎯 자녀 #2 워크플로 실행 (두 가지 방법)
+✅ **Step 5 성공 신호**: 본인 계정에 fork가 2개 (`kidsnote-backup` + `kidsnote-backup-2nd`).
 
-**방법 1 (권장) — fork 1개에서 시크릿 교체** :
-- fork repo → `Settings` → `Secrets and variables` → `Actions`
-- `NOTION_TOKEN` 시크릿을 **자녀 #2 통합 토큰**으로 임시 교체 (`Update secret`)
-- `NOTION_DATABASE_ID` 시크릿을 **자녀 #2 DB ID**로 임시 교체
-- `Actions` 탭 → `Kidsnote → Notion mirror` → `Run workflow ▾` → `child_name`에 **자녀 #2 이름의 일부** 입력 (예: `유주`)
-- 실행 후 자녀 #1로 돌아오려면 시크릿을 다시 자녀 #1 값으로 교체
-- 단점: 자녀 전환할 때마다 시크릿 두 개를 손으로 갈아 끼워야 함
-- 장점: 4시간 cron이 마지막 설정 기준으로 자동 돌아감
+#### Step 6. 자녀 #2 fork에 시크릿 4개 등록
+자녀 #2용 fork에서 [**7단계**](#7단계-github에-3개-비밀-값-등록하기) 그대로 진행 + 추가 시크릿 하나 더:
 
-**방법 2 — fork를 두 개 만들어 영구 분리** (가장 깔끔):
-- 본 repo를 한 번 더 fork (`username/kidsnote-backup-child2` 같은 이름)
-- 자녀 #2용 fork의 시크릿: 자녀 #2 통합 토큰 + 자녀 #2 DB ID + 키즈노트 쿠키 (쿠키는 두 fork가 공유 가능)
-- 자녀 #2용 fork의 워크플로에서 `child_name` 입력 또는 `KIDSNOTE_CHILD_NAME` 시크릿을 자녀 #2 이름으로 등록
-- 두 fork가 독립적으로 4시간 cron 자동 백업
-- 단점: GitHub 알림 / 로그가 두 군데로 분산
-- 장점: 한 번 셋업하면 손댈 일 없음
+| Name | 값 |
+|---|---|
+| `NOTION_TOKEN` | 자녀 #2 통합 토큰 (Step 2) |
+| `NOTION_DATABASE_ID` | 자녀 #2 DB ID (Step 4) |
+| `KIDSNOTE_SESSION_COOKIE` | **자녀 #1 fork와 같은 쿠키** (한 키즈노트 계정 = 한 쿠키) |
+| `KIDSNOTE_CHILD_NAME` | **자녀 #2 이름** (예: `혁주`) — 추가 시크릿 |
 
-<a id="자녀-id-이름-확인-실제-워크플로-로그-예시"></a>
+> ⚠️ **`KIDSNOTE_CHILD_NAME` 시크릿이 꼭 필요한 이유**: API가 자녀 list를 반환할 때 가족 기준 첫째/둘째와 다를 수 있습니다. 이 시크릿이 없으면 두 fork가 모두 API 순서 첫 번째 자녀(같은 자녀)를 백업하게 됩니다. 자녀 #1 fork에도 명시적으로 `KIDSNOTE_CHILD_NAME=하린`처럼 등록하는 게 안전해요.
+
+#### Step 7. 자녀 #2 fork에서 첫 실행
+자녀 #2 fork에서 [**8단계**](#8단계-백업-실행) 그대로 진행. `Run workflow` 클릭하면 자녀 #2 백업이 시작됩니다. **자녀 #1 fork와 독립적으로 4시간 cron 자동 백업**.
 
 ### 🔍 자녀 ID·이름 확인 (실제 워크플로 로그 예시)
 
-워크플로를 한 번 돌리면 시작 직후 로그에 다음과 같이 모든 자녀가 출력됩니다:
+각 fork의 첫 워크플로 로그에서 시작 직후:
 ```
-Account has 2 child(ren): #1 id=1173370 name=나유주, #2 id=1993699 name=나혁주
-Selected child: id=1173370 name=나유주 (override with --child-id / --child-name / KIDSNOTE_CHILD_NAME)
+Account has 2 child(ren): #1 id=1173370 name=우하린, #2 id=1993699 name=우혁주
+Selected child: id=1173370 name=우하린 (override with --child-id / --child-name / KIDSNOTE_CHILD_NAME)
 ```
 - **#1 / #2** 는 API가 반환한 순서 (가족이 생각하는 첫째/둘째와 다를 수 있음)
 - `Selected child:` 줄이 본인이 의도한 자녀와 일치하는지 매번 확인하세요
 
-<a id="child_name-input-사용법"></a>
+### 🧓 자녀 3명 이상이면
 
-### 📝 `child_name` input 사용법
+같은 패턴을 반복. 자녀 N명 = fork N개 + 노션 DB N개 + 노션 통합 N개. 각 fork에 `KIDSNOTE_CHILD_NAME=자녀이름` 시크릿으로 자녀 명시 지정. GitHub Actions는 fork마다 별도 runner라 자녀 10명이어도 모두 병렬 진행됩니다.
 
-`Run workflow` 화면의 `child_name` 칸:
+### 🔄 (대안) 하나의 fork에서 시크릿 갈아끼우는 방식
 
-| 입력 값 | 동작 |
-|---|---|
-| (비워둠) | 위 로그의 **#1 자녀**가 자동 선택 (기본 동작) |
-| `유주` | 이름에 `유주`가 들어간 자녀 1명만 매칭 (대소문자 무관, 부분 일치) |
-| `나유주` | 정확히 `나유주` 포함된 자녀만 |
-| (한 이름에 2명 이상 매칭) | 에러 — 후보 목록 출력 후 정확한 ID 지정 요청 |
+급하게 한 fork만 셋업하고 자녀별로 secret을 교체하면서 돌리는 것도 기술적으로 가능합니다. 하지만:
+- **느림**: sequential 처리 (자녀 #1 끝나야 #2 시작 → 자녀 2명이면 ~2배 시간)
+- **번거로움**: 자녀 전환할 때마다 NOTION_TOKEN + NOTION_DATABASE_ID 두 시크릿을 손으로 갈아 끼움
+- **cron 무용지물**: 4시간 cron이 마지막 설정의 자녀만 계속 백업
+
+→ **자녀 2명 이상이면 fork 분리가 거의 항상 정답**입니다.
 
 ---
 
