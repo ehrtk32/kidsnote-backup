@@ -55,53 +55,50 @@ on:
         required: false
         default: ""
 
-      # ---- AI master toggle (default ON) ----
-      # Default `true` per 2026-05-23 user feedback — operators who want
-      # the full experience (alimnota AI callouts + 4 LLM dashboards)
-      # shouldn't have to flip anything. Flip to `false` only for plain
-      # backup + 3 statistical dashboards (졸업 백업·사생활 보수적 등).
-      # The yaml passthrough below inverts this back to the existing
-      # DISABLE_ALL_LLM env var that fetch.py reads.
+      # ---- AI master toggle (default OFF) ----
+      # 2026-05-27: default flipped to OFF after the 1-year run took
+      # ~30h with AI on. AI off finishes in 1-3 hours and produces a
+      # clean keepsake backup (only the 3 statistical dashboards).
+      # Operators who want the AI gloss (1인칭 일기·부모 편지·LLM
+      # 대시보드 4종) flip to ``on``. on/off chosen over true/false
+      # because operators consistently confused the inverted
+      # disable-vs-enable polarity in support reports.
       use_ai_features:
-        description: "AI 가공 — 알림장 안(💭요약·🧒자녀일기·👨‍👩‍👧부모편지) + 별도 페이지 4개(📖성장스토리·🌟마일스톤·🌱관심사·💌선생님께). false면 단순 백업 + 통계 3개(📊통계·📅작년추억·🥗영양)만"
+        description: "AI 가공 — 알림장 안(💭요약·🧒자녀일기·👨‍👩‍👧부모편지) + 별도 페이지 4개(📖성장스토리·🌟마일스톤·🌱관심사·💌선생님께). 기본 off — 빠른 백업. 켜려면 on (느려짐 — 1년치 30시간+)"
         required: false
-        default: "true"
+        default: "off"
         type: choice
-        options: ["true", "false"]
+        options: ["off", "on"]
 
-      # ---- 4 LLM dashboards individually (default ON) ----
-      # If you want all per-alimnota callouts (요약/일기/편지) but not
-      # *all* 4 dashboards (some read awkwardly post-graduation), flip
-      # the offending one to `false`. Default true = generate.
-      # The master use_ai_features above wins — when it's `false`, these
-      # don't matter. NOTE: these only control the standalone dashboard
-      # pages. The 3 per-alimnota callouts (요약·자녀일기·부모의편지)
-      # only turn off via use_ai_features=false, since they share the
-      # same Ollama pipeline.
+      # ---- 4 LLM dashboards individually (default ON if master ON) ----
+      # The master use_ai_features above wins — when it's ``off``, these
+      # don't matter. With master ``on``, each of these defaults to ``on``;
+      # flip one to ``off`` if you want all AI callouts but skip a single
+      # dashboard (some read awkwardly post-graduation).
       use_growth_story:
-        description: "📖 매월 성장 스토리 별도 페이지 생성"
+        description: "📖 매월 성장 스토리 별도 페이지 생성 (use_ai_features=on일 때만 적용)"
         required: false
-        default: "true"
+        default: "on"
         type: choice
-        options: ["true", "false"]
+        options: ["on", "off"]
       use_milestones:
-        description: "🌟 우리 아이의 처음들(마일스톤) 별도 페이지 생성"
+        description: "🌟 우리 아이의 처음들(마일스톤) 별도 페이지 생성 (use_ai_features=on일 때만 적용)"
         required: false
-        default: "true"
+        default: "on"
         type: choice
-        options: ["true", "false"]
+        options: ["on", "off"]
       use_interests:
-        description: "🌱 분기별 관심사 별도 페이지 생성"
+        description: "🌱 분기별 관심사 별도 페이지 생성 (use_ai_features=on일 때만 적용)"
         required: false
-        default: "true"
+        default: "on"
         type: choice
-        options: ["true", "false"]
+        options: ["on", "off"]
       use_teacher_thanks:
-        description: "💌 연도별 선생님께 감사 카드 별도 페이지 생성"
+        description: "💌 연도별 선생님께 감사 카드 별도 페이지 생성 (use_ai_features=on일 때만 적용)"
         required: false
-        default: "true"
+        default: "on"
         type: choice
-        options: ["true", "false"]
+        options: ["on", "off"]
   # Auto-resume: a 1-year backfill can take 18-30 hours of compute,
   # but a GitHub-hosted runner caps a single job at 6 hours. Without
   # cron, the user would have to manually re-trigger after every cap.
@@ -168,14 +165,14 @@ jobs:
       # AI-opt-out runs don't pay the ~5min model-pull cost.
       - name: Cache Ollama models
         id: ollama-cache
-        if: ${{ inputs.use_ai_features != 'false' }}
+        if: ${{ inputs.use_ai_features == 'on' }}
         uses: actions/cache@v4
         with:
           path: ~/.ollama
           key: ollama-llama3.1-8b-v2
 
       - name: Install Ollama + pull model
-        if: ${{ inputs.use_ai_features != 'false' }}
+        if: ${{ inputs.use_ai_features == 'on' }}
         run: |
           if ! command -v ollama >/dev/null 2>&1; then
             curl -fsSL https://ollama.com/install.sh | sh
@@ -209,11 +206,15 @@ jobs:
           # legacy negative env names (DISABLE_*); we invert here with
           # ternary expressions instead of renaming everything downstream.
           KIDSNOTE_CHILD_NAME: ${{ inputs.child_name }}
-          DISABLE_ALL_LLM: ${{ inputs.use_ai_features == 'false' && 'true' || 'false' }}
-          DISABLE_GROWTH_STORY: ${{ inputs.use_growth_story == 'false' && 'true' || 'false' }}
-          DISABLE_MILESTONES: ${{ inputs.use_milestones == 'false' && 'true' || 'false' }}
-          DISABLE_INTERESTS: ${{ inputs.use_interests == 'false' && 'true' || 'false' }}
-          DISABLE_TEACHER_THANKS: ${{ inputs.use_teacher_thanks == 'false' && 'true' || 'false' }}
+          # 2026-05-27: on/off semantics + default off for use_ai_features.
+          # Master: DISABLE=true (off) unless explicitly set to 'on'.
+          # Individual dashboards: DISABLE=true only when explicitly 'off'
+          # (default 'on' keeps them enabled if master is also 'on').
+          DISABLE_ALL_LLM: ${{ inputs.use_ai_features == 'on' && 'false' || 'true' }}
+          DISABLE_GROWTH_STORY: ${{ inputs.use_growth_story == 'off' && 'true' || 'false' }}
+          DISABLE_MILESTONES: ${{ inputs.use_milestones == 'off' && 'true' || 'false' }}
+          DISABLE_INTERESTS: ${{ inputs.use_interests == 'off' && 'true' || 'false' }}
+          DISABLE_TEACHER_THANKS: ${{ inputs.use_teacher_thanks == 'off' && 'true' || 'false' }}
         run: |
           set -eu
           ARGS=( "--auth-mode" "session-cookie-env" "--publish-to-notion" "--no-local-save" )
