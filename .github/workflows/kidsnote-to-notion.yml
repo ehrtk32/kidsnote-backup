@@ -203,18 +203,19 @@ jobs:
           # ---- Multi-child / LLM-skip env passthrough ----
           # Master AI toggle: comes from steps.ai.outputs.value, which
           # reads the AI_FEATURES secret/variable. Same source for
-          # workflow_dispatch AND cron. Per-dashboard skips: if an
-          # advanced operator wants to keep AI on but mute one specific
-          # dashboard (e.g. the graduation card mid-year), they add a
-          # DISABLE_* secret directly — the names below are forwarded
-          # verbatim to fetch.py. No workflow_dispatch toggles for
-          # these anymore (cron never had access to them anyway).
+          # workflow_dispatch AND cron. Per-dashboard skips: secrets/
+          # variables use the positive on/off form (GROWTH_STORY=off etc)
+          # to match AI_FEATURES; the workflow inverts here so the
+          # downstream fetch.py keeps reading the existing DISABLE_*
+          # env names. Default behavior when the secret isn't set is
+          # ``on`` (= DISABLE=false) so the AI on path lights up all 4
+          # dashboards out of the box.
           KIDSNOTE_CHILD_NAME: ${{ secrets.KIDSNOTE_CHILD_NAME || vars.KIDSNOTE_CHILD_NAME || '' }}
           DISABLE_ALL_LLM: ${{ steps.ai.outputs.value == 'on' && 'false' || 'true' }}
-          DISABLE_GROWTH_STORY: ${{ secrets.DISABLE_GROWTH_STORY || vars.DISABLE_GROWTH_STORY || 'false' }}
-          DISABLE_MILESTONES: ${{ secrets.DISABLE_MILESTONES || vars.DISABLE_MILESTONES || 'false' }}
-          DISABLE_INTERESTS: ${{ secrets.DISABLE_INTERESTS || vars.DISABLE_INTERESTS || 'false' }}
-          DISABLE_TEACHER_THANKS: ${{ secrets.DISABLE_TEACHER_THANKS || vars.DISABLE_TEACHER_THANKS || 'false' }}
+          DISABLE_GROWTH_STORY: ${{ (secrets.GROWTH_STORY || vars.GROWTH_STORY) == 'off' && 'true' || 'false' }}
+          DISABLE_MILESTONES: ${{ (secrets.MILESTONES || vars.MILESTONES) == 'off' && 'true' || 'false' }}
+          DISABLE_INTERESTS: ${{ (secrets.INTERESTS || vars.INTERESTS) == 'off' && 'true' || 'false' }}
+          DISABLE_TEACHER_THANKS: ${{ (secrets.TEACHER_THANKS || vars.TEACHER_THANKS) == 'off' && 'true' || 'false' }}
         run: |
           set -eu
           ARGS=( "--auth-mode" "session-cookie-env" "--publish-to-notion" "--no-local-save" )
