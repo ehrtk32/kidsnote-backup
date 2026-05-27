@@ -908,10 +908,6 @@ NOTION_TOKEN                  Updated now
 1. **알림장·공지·앨범·식단 publish** — 새 페이지 생성 (시간 大, 사진 업로드 포함)
 2. **6개 대시보드 자동 생성** — 통계/영양 + 4개 LLM 페이지 (성장 스토리/마일스톤/관심사/연도별 선생님께). 새 알림장이 publish되면 LLM 대시보드도 자동 갱신
 
-> 💡 **`force_refresh` 옵션** (고급): 코드 업데이트 후 기존 알림장의 callout(자녀 일기/부모 편지)도 새 LLM prompt로 다시 만들고 싶으면, `Run workflow`에서 `force_refresh`를 `on`으로 설정. **첫 백업과 동일한 시간 소요** (모든 페이지를 archive 후 재발행). 마찬가지로 cron 자동 재개로 끝까지 진행됨.
->
-> 일반 사용자는 `force_refresh=off` (기본값)로 충분합니다.
-
 > 🔕 **cron 자동 트리거를 끄고 싶다면** (예: 가끔만 수동으로 돌리고 싶음): fork repo → `Actions` 탭 → 좌측 `Kidsnote → Notion mirror` 클릭 → 우측 `⋯` → `Disable workflow` 클릭 시 cron + 수동 트리거 모두 비활성화.
 
 <a id="8-4-진행-상황-보기-선택"></a>
@@ -1393,14 +1389,7 @@ _ 💌 연도별 선생님께                 ┘
 
 ### 코드 업데이트 후 권장 작업
 
-업데이트가 **LLM prompt 개선** 같은 경우, 기존 알림장의 callout(자녀 일기/부모 편지)은 옛 prompt로 만들어진 상태입니다. 새 prompt로 다시 만들고 싶으면:
-
-1. Sync fork 완료 후
-2. **`Actions`** → **`Kidsnote → Notion mirror`** → **`Run workflow`**
-3. **`force_refresh`** 를 **`on`** 으로 변경 → 녹색 버튼 클릭
-4. 첫 백업과 같은 시간(18~30시간) 소요. cron 자동 재개로 끝까지 진행됨
-
-> ⚠️ **force_refresh를 켤지 결정하는 기준**: 이미 노션에 잘 채워져 있고 큰 불만 없으면 그냥 둬도 됩니다. 새 prompt가 기존 callout을 더 좋게 만든다는 확신이 있을 때만 force_refresh.
+대부분의 경우 Sync fork만 하면 다음 cron부터 새 코드가 자동 적용돼서 별도 작업 불필요. 다만 **LLM prompt 개선**이 포함된 업데이트라면 기존 알림장의 AI callout은 옛 prompt 결과 그대로 남아 있습니다 — 다 새로 만들고 싶으면 `Actions → Kidsnote → Notion mirror → Run workflow` 폼에서 `force_refresh=on`으로 한 번 실행 (첫 백업과 같은 시간 소요, cron 자동 재개로 끝까지 진행). 이미 노션이 만족스러우면 굳이 안 돌려도 OK.
 
 ---
 
@@ -1608,11 +1597,7 @@ GitHub Issues 페이지에 질문을 올려주세요: https://github.com/redchup
 - qwen2.5:14b → 자녀 일기 1인칭 변환, 부모 편지, 4개 대시보드 (성장 스토리/마일스톤/관심사/연도별 선생님께)
 - 후처리: `_strip_lead_meta` (메타 lead-in 자동 제거), `_strip_cjk` (한자 누수 차단, >20%면 reject), `_english_word_leak_ratio` (영어 단어 leak 차단), `_looks_like_input_copy` (본문 verbatim 복사 차단 — PII 보호), `_extract_after_final_label` (분석+본문 분리), few-shot 예시 누수 가드, 명사구/문장형 자동 분류, 실패 시 1회 retry (temperature+0.25)
 
-**옵션 플래그**:
-- `monthly_sample=on` — 디버그용 월별 1개 알림장만 처리 (단위 테스트)
-- `force_refresh=on` — 기존 노션 페이지를 archive 후 재발행 (prompt 개선 후 기존 데이터 갱신용)
-
-워크플로 정의: [`.github/workflows/kidsnote-to-notion.yml`](.github/workflows/kidsnote-to-notion.yml)
+워크플로 정의 + input 옵션 전체 (limit/monthly_sample/force_refresh): [`.github/workflows/kidsnote-to-notion.yml`](.github/workflows/kidsnote-to-notion.yml)
 
 ---
 
