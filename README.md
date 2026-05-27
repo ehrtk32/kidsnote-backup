@@ -60,9 +60,9 @@
 > 노션 유료 플랜(파일당 5 GiB)이면 모두 업로드됩니다.
 
 > 🤖 **기본 백업은 단순 보존 모드** — 알림장·사진·댓글·식단·앨범·공지 + 통계 대시보드 3개만 만듭니다 (1년치 1~3시간). AI가 가공한 1인칭 일기·부모 편지·LLM 대시보드 4종은 **켜는 사람만** 받습니다.
-> - **AI 가공 켜는 법**: `Run workflow` 화면에서 **`use_ai_features`** 를 **`on`** 으로. 그러면 알림장 안 callout 3개(💭요약·🧒자녀일기·👨‍👩‍👧부모편지) + 별도 LLM 대시보드 4개(📖성장스토리·🌟마일스톤·🌱관심사·💌선생님께)가 추가됩니다.
+> - **AI 가공 켜는 법**: repo **`Settings` → `Secrets and variables` → `Actions`** 에서 secret **`AI_FEATURES=on`** 추가. 그러면 알림장 안 callout 3개(💭요약·🧒자녀일기·👨‍👩‍👧부모편지) + 별도 LLM 대시보드 4개(📖성장스토리·🌟마일스톤·🌱관심사·💌선생님께)가 다음 실행부터 추가됩니다.
 > - **AI 가공 품질 면책**: 무료 로컬 모델(`llama3.1:8b`)로 만들어집니다. 사건 anchoring + CJK·영어 leak 필터 + 호격 자동 처리 + 본문 verbatim 복사 차단 등 안전장치를 넣어두긴 했지만, 가끔 어색한 문장이나 알림장에 없던 디테일이 섞일 수 있습니다.
-> - **AI 켰는데 특정 페이지만 빼고 싶음**: `use_growth_story` / `use_milestones` / `use_interests` / `use_teacher_thanks` 각각 `off`로 개별 비활성화. 자세한 가이드는 [B. AI 가공을 안 쓰고 단순 백업 + 통계만 원할 때](#b-ai-가공을-안-쓰고-단순-백업-통계만-원할-때) 섹션 참고.
+> - **AI 켰는데 특정 페이지만 빼고 싶음**: 같은 화면에 `DISABLE_GROWTH_STORY` / `DISABLE_MILESTONES` / `DISABLE_INTERESTS` / `DISABLE_TEACHER_THANKS` 중 원하는 것을 `true`로 추가. 자세한 가이드는 [B. AI 가공을 안 쓰고 단순 백업 + 통계만 원할 때](#b-ai-가공을-안-쓰고-단순-백업-통계만-원할-때) 섹션 참고.
 
 ---
 
@@ -233,7 +233,7 @@ LLM이 가끔 헛소리를 만드는 걸 막기 위해 코드 안에 세 가지 
 
 > ⚠️ **100% 보장은 아닙니다.** LLM은 본질적으로 가끔 prompt를 안 따릅니다. 자녀 일기·부모 편지에서 어색한 부분 발견하면 노션에서 직접 수정하거나, AI 가공을 통째로 끄려면 [B. AI 가공을 안 쓰고 단순 백업 + 통계만 원할 때](#b-ai-가공을-안-쓰고-단순-백업-통계만-원할-때) 섹션 참고.
 
-> 🚦 **기본값은 `off` (AI 꺼짐)**. AI 가공이 필요하면 `Run workflow` 화면에서 `use_ai_features`를 **`on`** 으로 바꾸세요. 그러면 위 3개 토글이 페이지에 추가되고, 추가로 LLM 대시보드 4개도 생성됩니다. 자세한 가이드는 [B. AI 가공을 안 쓰고 단순 백업 + 통계만 원할 때](#b-ai-가공을-안-쓰고-단순-백업-통계만-원할-때) 섹션 참고.
+> 🚦 **기본값은 AI 꺼짐**. AI 가공이 필요하면 fork repo **`Settings` → `Secrets and variables` → `Actions`** 에서 secret **`AI_FEATURES=on`** 1개를 추가하세요. 그러면 위 3개 callout이 알림장에 추가되고, 추가로 LLM 대시보드 4개도 생성됩니다. 자세한 가이드는 [B. AI 가공을 안 쓰고 단순 백업 + 통계만 원할 때](#b-ai-가공을-안-쓰고-단순-백업-통계만-원할-때) 섹션 참고.
 
 1년치 알림장(보통 300~400개)이 노션 DB 한 곳에 자동 정렬됩니다.
 
@@ -256,7 +256,7 @@ LLM이 가끔 헛소리를 만드는 걸 막기 위해 코드 안에 세 가지 
 
 - 📊 통계 — 알림장 1개 이상이면 항상 생성
 - 🥗 영양 분석 — **식단 정보가 있는 알림장이 1개 이상일 때만** (어학원 등 식단을 안 올리는 곳은 생성 안 됨)
-- 📖 / 🌟 / 🌱 / 💌 — **`use_ai_features=on`** 일 때만 생성 (default `off`). 각 dashboard는 master `on` 상태에서 `use_growth_story=off` 등으로 개별 비활성화 가능
+- 📖 / 🌟 / 🌱 / 💌 — secret **`AI_FEATURES=on`** 일 때만 생성 (default 없음 = off). 마스터 on 상태에서 개별 페이지를 끄려면 secret `DISABLE_GROWTH_STORY=true` 등을 추가
 
 > 💡 모든 LLM 호출은 **GitHub Actions 러너 안의 무료 Ollama**(`qwen2.5:14b`)로 처리되어 외부 API 비용·노출이 없습니다.
 
@@ -283,8 +283,8 @@ LLM이 가끔 헛소리를 만드는 걸 막기 위해 코드 안에 세 가지 
             │  - 본문 한 줄 요약                         }
             │  - 4개 대시보드 (성장/마일스톤/관심사/감사) 생성
             │
-            │  ⚠️ AI 가공 끄고 단순 백업 + 통계만 원하면
-            │     workflow input `use_ai_features=off` 한 번 클릭
+            │  ⚠️ AI 가공은 기본 OFF. 켜고 싶으면 secret
+            │     AI_FEATURES=on 한 번 추가
             ▼
    내 노션 DB                       ← 나만 접근 가능
 ```
@@ -852,9 +852,9 @@ NOTION_TOKEN                  Updated now
 
 테스트 3개가 정상이면, 같은 방법으로 다시 실행하되 이번에는 `limit`을 **비워둡니다** (전체 백업).
 
-> ⚠️ **첫 백업 시간** — `use_ai_features` 값에 따라 크게 차이납니다.
+> ⚠️ **첫 백업 시간** — secret `AI_FEATURES` 설정에 따라 크게 차이납니다.
 >
-> **AI 끔** (기본값, `use_ai_features=off`) — Ollama 다운로드 + LLM 호출 모두 skip, 사진 업로드 시간이 대부분
+> **AI 끔** (기본값, secret 없음 또는 `AI_FEATURES=off`) — Ollama 다운로드 + LLM 호출 모두 skip, 사진 업로드 시간이 대부분
 >
 > | 알림장 수 | 예상 시간 | run 횟수 |
 > |---|---|---|
@@ -862,7 +862,7 @@ NOTION_TOKEN                  Updated now
 > | 100~200개 | 30분~1.5시간 | 1회 |
 > | 300~400개 + 사진 많음 | **1~3시간** | 1회 |
 >
-> **AI 켬** (`use_ai_features=on`) — 알림장당 LLM 호출 3회 + 4개 대시보드 LLM 생성 (llama3.1:8b CPU)
+> **AI 켬** (secret `AI_FEATURES=on`) — 알림장당 LLM 호출 3회 + 4개 대시보드 LLM 생성 (llama3.1:8b CPU)
 >
 > | 알림장 수 | 예상 시간 | run 횟수 |
 > |---|---|---|
@@ -1083,76 +1083,48 @@ Selected child: id=1173370 name=우하린 (override with --child-id / --child-na
 
 **기본값은 `off`** — 별다른 설정 없이 그냥 `Run workflow` 클릭하면 AI 가공 없이 단순 백업 + 통계 대시보드 3개만 생성됩니다 (1년치 1~3시간). 졸업·휴원 후 백업이나 사생활 보수적인 사용자에게 가장 잘 맞아요.
 
-<a id="옵션-1-가장-간단-ai-전부-끄기-한-번에"></a>
+<a id="ai-한-방-스위치-aifeatures"></a>
 
-### 🚦 옵션 1 (가장 간단) — 그냥 기본값으로 두기 = AI OFF
+### 🎚️ AI 한 방 스위치 — `AI_FEATURES` secret
 
-`Run workflow` 화면에서 모든 AI 옵션을 기본값(`off`/`on`) 그대로:
+AI 가공은 **`Run workflow` 폼이 아니라 repo secret 한 개**로 켜고 끕니다. 한 번 추가해두면 수동 실행과 cron 자동 실행 둘 다 똑같이 적용돼요.
 
-```
-Run workflow ▾
-├─ limit:               [비워둠]
-├─ monthly_sample:      off     (기본값 — 전체 백업)
-├─ force_refresh:       off     (기본값)
-├─ child_name:          [비워둠 또는 자녀 이름]
-├─ use_ai_features:     off     ← 🚦 기본값. AI OFF.
-├─ use_growth_story:    on      (의미 없음 — 위가 off면 무시)
-├─ use_milestones:      on      (의미 없음)
-├─ use_interests:       on      (의미 없음)
-├─ use_teacher_thanks:  on      (의미 없음)
-└─ [Run workflow] 클릭
-```
+**켜는 법** (한 번만):
 
-이 기본 흐름이면:
-- 알림장 본문·사진·첨부파일 · 댓글 · 공지 · 앨범 · 식단은 **그대로 백업**
-- 통계 대시보드 2개 (📊 / 🥗)는 **그대로 생성**
-- **AI가 만드는 7가지(callout 3 + 대시보드 4)는 모두 생성 안 됨**
-- 워크플로가 Ollama 다운로드까지 스킵해서 **1년치 1~3시간** 안에 끝남
-
-> 🕒 **cron 자동 재실행도 AI off로 따라옵니다** — `inputs.use_ai_features`는 사용자가 `Run workflow`에서 채운 값만 가지므로, **schedule cron 사이클은 항상 디폴트(`off`)** 로 동작합니다. AI를 **계속 켜둔 채로 cron까지 돌리고 싶으면** repo Variable을 한 번 설정하세요 (아래 옵션 참고).
-
-<a id="옵션-2-세밀하게-4개-대시보드만-골라서-끄기"></a>
-
-### 🎛️ 옵션 2 — AI 켜고, 그 중 4개 대시보드는 일부만 빼기
-
-AI 가공을 받고 싶지만 4개 대시보드 중 일부는 빼고 싶으면 (예: 성장 스토리는 어색하니 빼고 마일스톤만):
-
-```
-├─ use_ai_features:     on      ← 🟢 AI 마스터 켜기
-├─ use_growth_story:    off     ← 📖 성장 스토리만 빼기
-├─ use_milestones:      on      (생성)
-├─ use_interests:       on      (생성)
-├─ use_teacher_thanks:  on      (생성)
-```
-
-| Workflow input | `off`로 두면 안 만들어지는 페이지 | 무엇이 빠지나 |
-|---|---|---|
-| `use_growth_story` | 📖 매월 성장 스토리 | LLM이 매월 한 단락씩 쓰는 성장 일기 |
-| `use_milestones` | 🌟 마일스톤 | LLM이 추출한 "처음 ..." 순간들 |
-| `use_interests` | 🌱 분기 관심사 | LLM이 분기별로 정리한 자녀 관심사 TOP 5 |
-| `use_teacher_thanks` | 💌 연도별 선생님께 | LLM이 쓰는 졸업·연말 감사 편지 초안 |
-
-> ⚠️ **알림장 안 callout 3개 (💭 요약·🧒 자녀일기·👨‍👩‍👧 부모편지) 는 master `use_ai_features=on/off` 한 가지로만 제어 가능합니다** — 개별 끄는 옵션 없음.
-
-<a id="옵션-3-cron까지-ai-on으로-계속-유지하기"></a>
-
-### 🟢 옵션 3 — cron 자동 재실행까지 AI on으로 유지하기
-
-`Run workflow`에서 `use_ai_features=on`을 선택해도, **그건 그 한 번의 수동 실행에만 적용**됩니다. 그 다음 6시간 cron이 돌 때는 다시 디폴트(`off`)로 동작해서 LLM 대시보드가 갱신되지 않아요. 이걸 영구히 켜두려면:
-
-1. 본인 fork repo → **`Settings`** 클릭
+1. fork repo → **`Settings`** 클릭
 2. 좌측 **`Secrets and variables` → `Actions`** 클릭
-3. 화면 위쪽에 탭 두 개 — **`Secrets`** 또는 **`Variables`** 둘 중 **아무 곳이나** 가능. (이미 `NOTION_TOKEN` 등을 추가한 `Secrets` 탭에 같이 두는 게 가장 편함)
-4. 초록 버튼 **`New repository secret`** (또는 `New repository variable`) 클릭
-5. `Name`: **`AI_FEATURES`** (대소문자·언더바 정확히), `Value`: **`on`** (소문자) → `Add`
+3. 초록 버튼 **`New repository secret`** 클릭 (이미 `NOTION_TOKEN`을 추가한 그 화면)
+4. `Name`: **`AI_FEATURES`** (대소문자·언더바 정확히), `Value`: **`on`** (소문자) → `Add secret`
 
-✅ 이후로는 `Run workflow` 화면에서 `use_ai_features`를 안 만져도 (또는 cron이 자동으로 돌 때도) 항상 AI가 켜집니다.
+✅ 끝. 다음 cron부터, 또는 다음 `Run workflow` 클릭부터 AI가 켜집니다.
 
-🔙 **다시 끄고 싶으면**: 같은 화면에서 `AI_FEATURES` 항목의 값을 `off`로 바꾸거나 항목 자체를 삭제.
+**다시 끄는 법**: 같은 화면에서 `AI_FEATURES` 항목 **삭제** (또는 값을 `off`로 변경).
 
-> 💡 **왜 추가 항목이 필요한가요?** GitHub Actions의 `inputs.*` context는 사용자가 폼을 직접 채워야 채워지므로 **cron 이벤트에서는 항상 비어있음** → 디폴트(`off`)로 해석됨. Secrets / Variables는 cron에서도 읽을 수 있는 영구 저장소라 이 갭을 메웁니다.
+```
+AI_FEATURES 없음 (또는 off)  →  AI 끔 (기본값. 1년치 1~3시간)
+AI_FEATURES = on             →  AI 켬 (1년치 20~50시간. cron 자동 재개)
+```
+
+> 💡 **`Run workflow` 폼에는 왜 토글이 없나요?** 예전엔 폼에도 있고 secret에도 있어서 "둘 다 켜야 하나? 어느 게 우선이지?" 같은 헷갈림이 잦았어요. 그래서 폼 입력을 없애고 **`AI_FEATURES` secret 한 군데만** 보면 되도록 단순화했습니다. 폼은 더 가벼워졌고, AI 켜는 절차는 한 번이면 끝.
 >
-> **Secrets vs Variables는 어느 쪽이든 OK** — `AI_FEATURES=on`은 비밀 값이 아니지만, 워크플로 코드가 두 탭 모두에서 읽도록 만들어져 있어요. 익숙한 곳에 그냥 두세요.
+> **Secrets / Variables 어느 탭이든 OK** — `AI_FEATURES=on`은 비밀 값이 아니지만, 워크플로 코드가 두 탭 모두에서 읽도록 만들어져 있어서 익숙한 곳에 그냥 두세요.
+
+<a id="ai-일부-대시보드만-끄기-advanced"></a>
+
+### 🎛️ AI 켜되 특정 대시보드만 끄기 (advanced)
+
+AI는 켜고 싶은데 4개 대시보드 중 일부는 빼고 싶으면 (예: 졸업한 자녀라 매월 성장 스토리는 어색) — 다음 secret을 같은 화면에 추가:
+
+| Secret 이름 | 값 | 끄는 페이지 |
+|---|---|---|
+| `DISABLE_GROWTH_STORY` | `true` | 📖 매월 성장 스토리 |
+| `DISABLE_MILESTONES` | `true` | 🌟 마일스톤 |
+| `DISABLE_INTERESTS` | `true` | 🌱 분기 관심사 |
+| `DISABLE_TEACHER_THANKS` | `true` | 💌 연도별 선생님께 |
+
+켜고 싶으면 항목 **삭제** (값을 `false`로 바꿔도 OK).
+
+> ⚠️ **알림장 안 callout 3개 (💭 요약·🧒 자녀일기·👨‍👩‍👧 부모편지)** 는 master `AI_FEATURES=on/off` 한 가지로만 제어 — 개별 끄는 옵션 없음.
 
 <a id="상황별-권장-조합"></a>
 
@@ -1160,10 +1132,9 @@ AI 가공을 받고 싶지만 4개 대시보드 중 일부는 빼고 싶으면 (
 
 | 상황 | 권장 |
 |---|---|
-| **빠르고 깔끔한 백업** (대부분 사용자) | 그냥 기본값 = `use_ai_features=off` |
-| **AI 가공 한 번만 받아보기** (셋업 후 시범) | `Run workflow`에서 `use_ai_features=on` (그 1회만 적용. cron은 다시 off) |
-| **AI 가공도 다 받기 + cron까지 자동 갱신** | repo Variable `AI_FEATURES=on` 설정 (옵션 3) + 4개 dashboard 모두 `on` (기본값) |
-| **AI 켜되 편지만 어색해서 빼기** | `use_ai_features=on` + `use_growth_story=off` + `use_teacher_thanks=off` |
+| **빠르고 깔끔한 백업** (대부분 사용자) | secret 추가 **없음** — 그게 기본 AI off |
+| **AI 가공 다 받기 + cron 자동 갱신** | secret `AI_FEATURES=on` 1개 추가 |
+| **AI 켜되 졸업 자녀 편지·성장 스토리는 빼기** | `AI_FEATURES=on` + `DISABLE_TEACHER_THANKS=true` + `DISABLE_GROWTH_STORY=true` |
 | **통계 페이지조차 싫음** | 현재 옵션 없음. 해당 페이지를 노션에서 수동 archive |
 
 <a id="매번-같은-설정으로-돌리고-싶다면-영구-설정"></a>
@@ -1461,7 +1432,7 @@ _ 💌 연도별 선생님께                 ┘
 받침 있는 이름(`하린`, `시연` 등)에는 처음부터 영향이 없었습니다.
 
 만약 그래도 AI 가공 결과가 마음에 안 든다면:
-1. **AI 통째로 끄기** — `Run workflow`에서 `use_ai_features=off` (단순 백업 + 통계만)
+1. **AI 통째로 끄기** — repo Settings에서 `AI_FEATURES` secret 삭제 (또는 값을 `off`로) → 단순 백업 + 통계만
 2. **일부만 끄기** — 4개 `disable_*` 옵션 중 원하는 것만
 
 자세한 가이드는 [👨‍👩‍👧‍👦 (고급) 자녀가 여러 명이거나 AI 편지를 끄고 싶을 때](#advanced-multichild-and-ai-off) 섹션 참고.
@@ -1592,7 +1563,7 @@ UI는 노션이 가끔 바뀝니다. 메뉴 이름이 달라도 다음 기능을
 | 모바일/태블릿에서 단계 진행 안 됨 | 모바일은 미지원 | 데스크톱/노트북 사용 |
 | **다른 자녀가 백업됨** (둘째인데 첫째가 백업됨) | 자녀가 둘 이상이면 API상 첫 번째 자녀가 default. `child_name` workflow input 누락 | `Run workflow` 시 **`child_name`** 칸에 백업하려는 자녀 이름 일부 입력 (예: `유주`). 자세히는 [(고급) 자녀가 여러 명이거나 AI 편지를 끄고 싶을 때](#advanced-multichild-and-ai-off) 섹션 |
 | **🥗 영양 분석 페이지 안 보임** | 어린이집/학원이 식단 정보를 안 올렸음 | 정상 동작 — 식단 데이터 0개면 영양 분석 페이지는 미생성 (어학원·소규모 시설에서 흔함) |
-| **📖 / 🌟 / 🌱 / 💌 AI 페이지 안 보임** | (1) Ollama 다운로드 실패 또는 (2) `use_ai_features=off` 또는 개별 `use_X=false` 설정 | (1) Actions 로그에서 `Ollama` 라인 확인 / (2) `Run workflow`에서 해당 옵션을 `true`로 두고 재실행 |
+| **📖 / 🌟 / 🌱 / 💌 AI 페이지 안 보임** | (1) Ollama 다운로드 실패 또는 (2) secret `AI_FEATURES`가 없거나 `off` 또는 개별 `DISABLE_*=true` 설정 | (1) Actions 로그에서 `Ollama` 라인 확인 / (2) repo Settings에서 `AI_FEATURES=on` 추가, 개별 `DISABLE_*`는 삭제 |
 | 카카오 SSO 계정인데 쿠키 추출이 안 됨 | 카카오로 로그인한 뒤에도 키즈노트 sessionid 쿠키는 정상 발급됨 | 카카오 로그인 → 키즈노트 메인 화면으로 자동 이동 후 그 상태에서 F12 → 6단계 그대로 진행 |
 
 <a id="정말-막혔다면"></a>

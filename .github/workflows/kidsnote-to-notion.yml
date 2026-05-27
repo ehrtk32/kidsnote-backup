@@ -55,59 +55,30 @@ on:
         required: false
         default: ""
 
-      # ---- AI master toggle (default OFF) ----
-      # 2026-05-27: default flipped to OFF after the 1-year run took
-      # ~30h with AI on. AI off finishes in 1-3 hours and produces a
-      # clean keepsake backup (only the 3 statistical dashboards).
-      # Operators who want the AI gloss (1인칭 일기·부모 편지·LLM
-      # 대시보드 4종) flip to ``on``. on/off chosen over true/false
-      # because operators consistently confused the inverted
-      # disable-vs-enable polarity in support reports.
+      # ---- AI master toggle: secret/variable AI_FEATURES (only) ----
+      # The AI master toggle lives ONLY in repo Secrets/Variables now —
+      # not as a workflow_dispatch input. Rationale (2026-05-27 user
+      # feedback): the previous design had BOTH an ``inputs.use_ai_features``
+      # toggle AND a ``vars.AI_FEATURES`` fallback for cron events.
+      # Operators kept asking "which one wins? do I need to flip both?"
+      # The duplication was inevitable because cron schedule events
+      # don't have an ``inputs`` context — so the secret/variable was
+      # the only thing the cron path could read. Rather than keep the
+      # ambiguous double toggle, we drop the input and standardize on
+      # the secret. Single source of truth: set/remove the secret
+      # ``AI_FEATURES=on`` and that's the entire toggle.
       #
-      # ``default_or_repo_var`` option: when the operator wants AI on
-      # but doesn't want to flip it every time they Run workflow, they
-      # can set a repository variable ``AI_FEATURES=on`` (Settings →
-      # Secrets and variables → Actions → Variables tab). The
-      # workflow body falls back to that variable when this input is
-      # left at its default. This is also what cron schedule events
-      # see — the ``inputs`` context is empty on schedule, so without
-      # this fallback the 4 LLM dashboards never regenerate on cron.
-      use_ai_features:
-        description: "AI 가공 — 알림장 안(💭요약·🧒자녀일기·👨‍👩‍👧부모편지) + 별도 페이지 4개(📖성장스토리·🌟마일스톤·🌱관심사·💌선생님께). 기본 off / cron도 따라 off. 항상 on으로 돌리고 싶으면 repo Variables에 AI_FEATURES=on 추가."
-        required: false
-        default: "off"
-        type: choice
-        options: ["off", "on"]
-
-      # ---- 4 LLM dashboards individually (default ON if master ON) ----
-      # The master use_ai_features above wins — when it's ``off``, these
-      # don't matter. With master ``on``, each of these defaults to ``on``;
-      # flip one to ``off`` if you want all AI callouts but skip a single
-      # dashboard (some read awkwardly post-graduation).
-      use_growth_story:
-        description: "📖 매월 성장 스토리 별도 페이지 생성 (use_ai_features=on일 때만 적용)"
-        required: false
-        default: "on"
-        type: choice
-        options: ["on", "off"]
-      use_milestones:
-        description: "🌟 우리 아이의 처음들(마일스톤) 별도 페이지 생성 (use_ai_features=on일 때만 적용)"
-        required: false
-        default: "on"
-        type: choice
-        options: ["on", "off"]
-      use_interests:
-        description: "🌱 분기별 관심사 별도 페이지 생성 (use_ai_features=on일 때만 적용)"
-        required: false
-        default: "on"
-        type: choice
-        options: ["on", "off"]
-      use_teacher_thanks:
-        description: "💌 연도별 선생님께 감사 카드 별도 페이지 생성 (use_ai_features=on일 때만 적용)"
-        required: false
-        default: "on"
-        type: choice
-        options: ["on", "off"]
+      # Advanced operators who want to skip a single AI dashboard (e.g.
+      # the graduation thank-you card reads awkwardly mid-year) can add
+      # the matching DISABLE secret directly:
+      #   DISABLE_GROWTH_STORY=true   → skip 📖 매월 성장 스토리
+      #   DISABLE_MILESTONES=true     → skip 🌟 마일스톤
+      #   DISABLE_INTERESTS=true      → skip 🌱 분기별 관심사
+      #   DISABLE_TEACHER_THANKS=true → skip 💌 연도별 선생님께
+      # These were workflow_dispatch inputs prior to 2026-05-27 but
+      # were removed at the same time as use_ai_features for the same
+      # single-source-of-truth reason — the cron path never had access
+      # to them anyway, so keeping them as inputs was misleading.
   # Auto-resume: a 1-year backfill can take 18-30 hours of compute,
   # but a GitHub-hosted runner caps a single job at 6 hours. Without
   # cron, the user would have to manually re-trigger after every cap.
@@ -170,27 +141,21 @@ jobs:
       # retry-with-temperature) make 8B's quality acceptable; we trade
       # the 14B perspective wins for a backup that actually finishes.
       #
-      # When `use_ai_features=false`, both steps below are skipped so
-      # AI-opt-out runs don't pay the ~5min model-pull cost.
-      # ``effective_ai`` resolves the master AI toggle for BOTH manual
-      # dispatch AND cron schedule. On schedule events ``inputs.*`` is
-      # empty (since no one filled the form), so we fall back to a
-      # repo variable OR a repo secret named ``AI_FEATURES``. In
-      # practice operators add ``AI_FEATURES=on`` to whichever tab
-      # (Variables OR Secrets) they happen to land on — both work the
-      # same here. The value isn't sensitive (just ``on`` / ``off``),
-      # but the Secrets tab is where the existing tokens live so it
-      # gets used by muscle memory.
+      # When ``AI_FEATURES`` secret/variable is unset or 'off', the
+      # cache + pull steps below are skipped so AI-opt-out runs don't
+      # pay the ~5min model-pull cost.
+      # ``effective_ai`` reads the master AI toggle from repo Secrets
+      # or Variables. The input has been retired — single source of
+      # truth is ``AI_FEATURES`` (Secrets or Variables tab, either
+      # works). cron schedule events read the same value, so manual
+      # dispatch and cron stay in sync without any second toggle.
       - name: Resolve effective AI toggle
         id: ai
         env:
-          INPUT_AI: ${{ inputs.use_ai_features }}
           REPO_VAR_AI: ${{ vars.AI_FEATURES }}
           REPO_SECRET_AI: ${{ secrets.AI_FEATURES }}
         run: |
-          if [ "$INPUT_AI" = "on" ]; then
-            echo "value=on" >> "$GITHUB_OUTPUT"
-          elif [ -z "$INPUT_AI" ] && { [ "$REPO_VAR_AI" = "on" ] || [ "$REPO_SECRET_AI" = "on" ]; }; then
+          if [ "$REPO_VAR_AI" = "on" ] || [ "$REPO_SECRET_AI" = "on" ]; then
             echo "value=on" >> "$GITHUB_OUTPUT"
           else
             echo "value=off" >> "$GITHUB_OUTPUT"
@@ -233,23 +198,20 @@ jobs:
           OLLAMA_MODEL: "llama3.1:8b"
           PYTHONUNBUFFERED: "1"
           # ---- Multi-child / LLM-skip env passthrough ----
-          # The user-facing inputs use the positive form (`use_ai_features`,
-          # `use_growth_story`, etc) and default to `true` so the happy
-          # path needs zero flipping. Internally fetch.py still reads the
-          # legacy negative env names (DISABLE_*); we invert here with
-          # ternary expressions instead of renaming everything downstream.
+          # Master AI toggle: comes from steps.ai.outputs.value, which
+          # reads the AI_FEATURES secret/variable. Same source for
+          # workflow_dispatch AND cron. Per-dashboard skips: if an
+          # advanced operator wants to keep AI on but mute one specific
+          # dashboard (e.g. the graduation card mid-year), they add a
+          # DISABLE_* secret directly — the names below are forwarded
+          # verbatim to fetch.py. No workflow_dispatch toggles for
+          # these anymore (cron never had access to them anyway).
           KIDSNOTE_CHILD_NAME: ${{ inputs.child_name }}
-          # 2026-05-27: on/off semantics + default off for use_ai_features.
-          # Master: uses ``steps.ai.outputs.value`` so cron schedule also
-          # honours the repo Variable AI_FEATURES (inputs.* is empty on
-          # schedule events). Individual dashboards: DISABLE=true only
-          # when explicitly 'off' (default 'on' keeps them enabled if
-          # master is also 'on').
           DISABLE_ALL_LLM: ${{ steps.ai.outputs.value == 'on' && 'false' || 'true' }}
-          DISABLE_GROWTH_STORY: ${{ inputs.use_growth_story == 'off' && 'true' || 'false' }}
-          DISABLE_MILESTONES: ${{ inputs.use_milestones == 'off' && 'true' || 'false' }}
-          DISABLE_INTERESTS: ${{ inputs.use_interests == 'off' && 'true' || 'false' }}
-          DISABLE_TEACHER_THANKS: ${{ inputs.use_teacher_thanks == 'off' && 'true' || 'false' }}
+          DISABLE_GROWTH_STORY: ${{ secrets.DISABLE_GROWTH_STORY || vars.DISABLE_GROWTH_STORY || 'false' }}
+          DISABLE_MILESTONES: ${{ secrets.DISABLE_MILESTONES || vars.DISABLE_MILESTONES || 'false' }}
+          DISABLE_INTERESTS: ${{ secrets.DISABLE_INTERESTS || vars.DISABLE_INTERESTS || 'false' }}
+          DISABLE_TEACHER_THANKS: ${{ secrets.DISABLE_TEACHER_THANKS || vars.DISABLE_TEACHER_THANKS || 'false' }}
         run: |
           set -eu
           ARGS=( "--auth-mode" "session-cookie-env" "--publish-to-notion" "--no-local-save" )
