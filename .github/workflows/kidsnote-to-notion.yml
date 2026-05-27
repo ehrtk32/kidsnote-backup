@@ -43,17 +43,20 @@ on:
         type: choice
         options: ["off", "on"]
       # ---- Multi-child accounts ----
-      # If your kidsnote account has more than one child, the script needs
-      # to know which one to mirror. The sessionid cookie itself isn't
-      # child-scoped (it doesn't matter which child you "select" in the
-      # kidsnote web UI before extracting the cookie), so the script
-      # defaults to the first child the API returns. Set this to the
-      # other child's NAME (case-insensitive substring) to override.
-      # Leave empty for single-child accounts.
-      child_name:
-        description: "자녀 1명이면 비워두세요. 자녀 2명 이상이면 백업할 아이 이름 일부 입력 (예: '하린')"
-        required: false
-        default: ""
+      # Like the AI master toggle, the child selector now lives in repo
+      # Secrets/Variables (``KIDSNOTE_CHILD_NAME``) rather than as a
+      # workflow_dispatch input. Reason (2026-05-27 user feedback):
+      # schedule cron events don't see ``inputs.*``, so a form-only
+      # toggle silently fell back to "first child the API returns" on
+      # every cron cycle. Operators with twins/siblings had to wake up
+      # and re-dispatch manually each time. Single source of truth via
+      # secret keeps cron and manual dispatch in sync without surprise.
+      #
+      # Per-fork: ``KIDSNOTE_CHILD_NAME`` = name substring (e.g. "하린").
+      # Multi-child in ONE fork: also set ``KIDSNOTE_CHILD_NAME_2``,
+      # ``KIDSNOTE_CHILD_NAME_3`` etc with matching session/db slots.
+      # See README "자녀가 여러 명일 때" section for the recommended
+      # one-fork-per-child layout (parallel runs, ~2× faster).
 
       # ---- AI master toggle: secret/variable AI_FEATURES (only) ----
       # The AI master toggle lives ONLY in repo Secrets/Variables now —
@@ -206,7 +209,7 @@ jobs:
           # DISABLE_* secret directly — the names below are forwarded
           # verbatim to fetch.py. No workflow_dispatch toggles for
           # these anymore (cron never had access to them anyway).
-          KIDSNOTE_CHILD_NAME: ${{ inputs.child_name }}
+          KIDSNOTE_CHILD_NAME: ${{ secrets.KIDSNOTE_CHILD_NAME || vars.KIDSNOTE_CHILD_NAME || '' }}
           DISABLE_ALL_LLM: ${{ steps.ai.outputs.value == 'on' && 'false' || 'true' }}
           DISABLE_GROWTH_STORY: ${{ secrets.DISABLE_GROWTH_STORY || vars.DISABLE_GROWTH_STORY || 'false' }}
           DISABLE_MILESTONES: ${{ secrets.DISABLE_MILESTONES || vars.DISABLE_MILESTONES || 'false' }}
