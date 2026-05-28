@@ -12,7 +12,7 @@
 
 > 📱 휴대폰만 있으면 셋업 불가. 데스크톱·노트북 필요.
 
-> 🤖 **AI 가공은 기본 OFF** — 그냥 `Run workflow` 클릭하면 키즈노트 원본 + 통계 대시보드 2개만 빠르게 백업됩니다 (1년치 1~3시간). AI가 만드는 자녀 일기/부모 편지/LLM 대시보드 4종을 받고 싶으면 7단계 secret 표에서 `AI_FEATURES=on` 한 줄만 추가 (느려짐 — 1년치 약 5~15시간, cron 자동 재개).
+> 🤖 **AI 가공은 7단계 secret에서 on/off 선택** — `AI_FEATURES=off`면 키즈노트 원본 + 통계 대시보드 2개만 빠르게 백업 (1년치 1-3시간). `AI_FEATURES=on`이면 자녀 일기/부모 편지/LLM 대시보드 4종까지 추가 (1년치 5-15시간, cron 자동 재개).
 
 > 👨‍👩‍👧‍👦 **자녀가 2명 이상이면** 자녀별로 fork + 노션 DB를 따로 만드는 것이 권장입니다 (병렬 실행 가능, 대시보드가 한 아이 기준으로 만들어지기 때문). 아래 셋업은 **자녀 1명 기준**이며, 자세한 multi-child 가이드는 [README의 A. 자녀가 여러 명이면](README.md#advanced-multichild-and-ai-off) 섹션 참고.
 
@@ -91,26 +91,30 @@ https://www.notion.so/내이름/238f5e29c0894adfb6c4d8e1a5b2c3d4?v=...
 
 ---
 
-## 7️⃣ GitHub Secrets 등록 (4분)
+## 7️⃣ GitHub Secrets 5개 등록 (5분)
 
 1. 본인 fork 페이지 (`https://github.com/내깃허브아이디/kidsnote-backup`) → 메뉴줄 **`Settings`** 클릭
    - ⚠️ 우측 상단 프로필 옆 Settings가 아닌 **repo 안의 Settings**
 2. 좌측 사이드바 **`Secrets and variables` → `Actions`** 클릭
-3. **`New repository secret`** 버튼을 눌러 다음 secrets를 등록:
+3. **`New repository secret`** 버튼을 **5번** 클릭해서 다음 5개를 모두 등록:
 
-| Name (대소문자·언더바 정확히) | 값 | 필수? |
-|---|---|---|
-| `NOTION_TOKEN` | 3번에서 받은 토큰 | ✅ 필수 |
-| `NOTION_DATABASE_ID` | 5번에서 추출한 32자 hex | ✅ 필수 |
-| `KIDSNOTE_SESSION_COOKIE` | 6번에서 복사한 쿠키 | ✅ 필수 |
-| `KIDSNOTE_CHILD_NAME` | 백업할 자녀 이름 (예: `우하린`) | ✅ 필수 |
-| `AI_FEATURES` | `on` (소문자) | ⚪ 선택 — AI 가공 켜고 싶을 때만 |
+| Name (대소문자·언더바 정확히) | 값 |
+|---|---|
+| `NOTION_TOKEN` | 3번에서 받은 토큰 |
+| `NOTION_DATABASE_ID` | 5번에서 추출한 32자 hex |
+| `KIDSNOTE_SESSION_COOKIE` | 6번에서 복사한 쿠키 |
+| `KIDSNOTE_CHILD_NAME` | 백업할 자녀 이름 (예: `우하린`) |
+| `AI_FEATURES` | `on` (AI 가공 켜기) 또는 `off` (AI 가공 끄기) |
 
-✅ Secrets 목록에 4~5개가 정확한 이름으로 나타나면 성공.
+✅ Secrets 목록에 위 5개 이름이 정확히 나타나면 성공.
 
 > 👶 **`KIDSNOTE_CHILD_NAME`는 자녀 1명이라도 꼭 입력**. 부분 일치(대소문자 무시) 방식이라 글자 수 제한 없음 — `우하린`도 `정에스더`도 `유주`도 OK. 풀네임 또는 일부 어느 것을 적어도 같은 결과 (예: `정에스더`라면 `정에스더`/`에스더`/`스더` 다 매칭).
 
-> 🤖 **`AI_FEATURES`는 안 넣으면 기본값 OFF** (백업 빠름, 1년치 1~3시간). `on`으로 추가하면 자녀 일기/부모 편지/LLM 대시보드 4종까지 생성 (느려짐, 1년치 5~15시간). cron 자동 재실행에도 똑같이 적용되니 한 번만 결정하면 끝.
+> 🤖 **`AI_FEATURES` 값 선택**:
+> - **`off`** → 빠른 백업 (1년치 1-3시간). 알림장·사진·식단·통계 대시보드 2개만 깔끔히.
+> - **`on`** → 느린 백업 (1년치 5-15시간, cron 자동 재개). 자녀 일기/부모 편지/LLM 대시보드 4종까지 추가.
+>
+> 어느 쪽이든 cron 자동 재실행에도 같은 값이 적용됩니다. 나중에 마음 바뀌면 값만 바꾸면 끝.
 
 ---
 
@@ -119,7 +123,7 @@ https://www.notion.so/내이름/238f5e29c0894adfb6c4d8e1a5b2c3d4?v=...
 1. fork 페이지 상단 **`Actions`** 탭 → 처음이면 `I understand my workflows, go ahead and enable them` 버튼 클릭
 2. 좌측 **`Kidsnote → Notion mirror`** 클릭 → 우측 **`Run workflow ▾`**
 3. **첫 테스트**: `limit` 칸에 **`3`** 입력 → 녹색 **`Run workflow`** 클릭
-4. 노션 DB 확인 (AI=off면 **3~5분**, AI=on이면 **15~25분** — Ollama 다운로드 포함):
+4. 노션 DB 확인 (AI=off면 **3-5분**, AI=on이면 **15-25분** — Ollama 다운로드 포함):
    - 알림장 3건 본문 + 사진 OK
    - 📊 통계 / 🥗 영양 대시보드 페이지 (식단 정보 있으면) 생성됨
    - AI=on인 경우: 각 알림장에 자녀 일기/부모 편지 callout 3개 추가됨 (`limit=3`은 LLM 대시보드 만들기엔 데이터 부족이라 4개는 전체 백업 후 자연스럽게 채워짐)
@@ -134,9 +138,9 @@ https://www.notion.so/내이름/238f5e29c0894adfb6c4d8e1a5b2c3d4?v=...
 
 이제 **컴퓨터를 꺼도** GitHub의 클라우드 서버가 알아서 백업합니다.
 
-- 1년치(300~400개) 첫 백업 소요 시간:
-  - **AI 끔** (기본값) → **1~3시간**
-  - **AI 켬** (`AI_FEATURES=on`) → **5~15시간** (cron 자동 재개로 2~3회 사이클에 걸쳐 완성됨)
+- 1년치(300-400개) 첫 백업 소요 시간:
+  - **AI 끔** (`AI_FEATURES=off`) → **1-3시간**
+  - **AI 켬** (`AI_FEATURES=on`) → **5-15시간** (cron 자동 재개로 2-3회 사이클에 걸쳐 완성됨)
 - 이후 새 알림장은 6시간 안에 자동 추가
 - 노션 DB에 들어가면 알림장·사진·댓글·식단·앨범 + AI 가공 + 통계 대시보드가 모두 정리되어 있어요
 
