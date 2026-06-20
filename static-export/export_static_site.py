@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import html
 import json
 import mimetypes
@@ -463,10 +464,28 @@ def write_text(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def hashed_asset_name(prefix: str, extension: str, content: str) -> str:
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()[:12]
+    return f"{prefix}.{digest}.{extension}"
+
+
 def write_static_assets(out_dir: Path) -> None:
-    write_text(out_dir / "index.html", INDEX_HTML)
-    write_text(out_dir / "assets/styles.css", STYLES_CSS)
-    write_text(out_dir / "assets/app.js", APP_JS)
+    assets_dir = out_dir / "assets"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    for pattern in ("styles*.css", "app*.js"):
+        for path in assets_dir.glob(pattern):
+            path.unlink()
+
+    styles_name = hashed_asset_name("styles", "css", STYLES_CSS)
+    app_name = hashed_asset_name("app", "js", APP_JS)
+    index_html = (
+        INDEX_HTML
+        .replace("__STYLES_HREF__", f"/assets/{styles_name}")
+        .replace("__APP_SRC__", f"/assets/{app_name}")
+    )
+    write_text(out_dir / "index.html", index_html)
+    write_text(assets_dir / styles_name, STYLES_CSS)
+    write_text(assets_dir / app_name, APP_JS)
     write_text(out_dir / "_headers", HEADERS)
 
 
@@ -594,7 +613,7 @@ INDEX_HTML = """<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Seoi Kidsnote</title>
-  <link rel="stylesheet" href="/assets/styles.css">
+  <link rel="stylesheet" href="__STYLES_HREF__">
 </head>
 <body class="locked">
   <section class="passcode-screen" id="passcodeScreen">
@@ -660,7 +679,7 @@ INDEX_HTML = """<!doctype html>
     </figure>
     <button class="lightbox-nav lightbox-next" type="button" aria-label="다음 사진">&#8250;</button>
   </div>
-  <script src="/assets/app.js"></script>
+  <script src="__APP_SRC__"></script>
 </body>
 </html>
 """
