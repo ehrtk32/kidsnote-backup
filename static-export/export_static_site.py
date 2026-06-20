@@ -603,6 +603,7 @@ INDEX_HTML = """<!doctype html>
       <h1>Seoi Kidsnote</h1>
       <label class="passcode-label" for="passcodeInput">가족 패스코드</label>
       <input id="passcodeInput" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="6자리">
+      <p class="passcode-hint">아기생년월일 (6자리)</p>
       <button class="passcode-submit" type="submit">열기</button>
       <p class="passcode-message" id="passcodeMessage" aria-live="polite"></p>
     </form>
@@ -770,6 +771,12 @@ body:not(.locked) .passcode-screen {
 .passcode-card input:focus {
   border-color: var(--accent);
   outline: 3px solid var(--accent-soft);
+}
+
+.passcode-hint {
+  margin: -4px 0 2px;
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .passcode-submit {
