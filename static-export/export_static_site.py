@@ -92,6 +92,11 @@ def plain_text(rich_text: list[dict[str, Any]]) -> str:
     return "".join((item.get("plain_text") or "") for item in rich_text or [])
 
 
+def is_comment_heading(text: str) -> bool:
+    cleaned = re.sub(r"\s+", " ", text).strip()
+    return cleaned.startswith("💬 댓글") or cleaned.startswith("댓글 (")
+
+
 def strip_html(value: str) -> str:
     text = re.sub(r"<[^>]+>", " ", value)
     return re.sub(r"\s+", " ", html.unescape(text)).strip()
@@ -300,13 +305,7 @@ class StaticRenderer:
         self.first_image_url = ""
         blocks = self.notion.children(page.page_id)
         content = self.render_blocks(blocks, page)
-        footer = (
-            "<hr><p><small>"
-            f"Kidsnote Report ID: {html.escape(str(page.report_id))}"
-            + (f' · <a href="{html.escape(page.url, quote=True)}">Original Notion page</a>' if page.url else "")
-            + "</small></p>"
-        )
-        return content + footer, self.first_image_url
+        return content, self.first_image_url
 
     def render_blocks(self, blocks: list[dict[str, Any]], page: NotionPage) -> str:
         html_parts: list[str] = []
@@ -323,6 +322,10 @@ class StaticRenderer:
 
         for block in blocks:
             btype = block.get("type")
+            data = block.get(btype or "", {})
+            if btype in {"heading_1", "heading_2", "heading_3"} and is_comment_heading(plain_text(data.get("rich_text") or [])):
+                flush_list()
+                break
             if btype in {"bulleted_list_item", "numbered_list_item"}:
                 if list_type and list_type != btype:
                     flush_list()
@@ -612,14 +615,15 @@ INDEX_HTML = """<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Seoi Kidsnote</title>
+  <title>서이의 키즈노트</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23548a62'/%3E%3Cpath fill='white' d='M32 52S10 39.5 10 24.5C10 16.8 15.8 12 22.2 12c4.2 0 7.6 2.1 9.8 5.5C34.2 14.1 37.6 12 41.8 12C48.2 12 54 16.8 54 24.5C54 39.5 32 52 32 52z'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="__STYLES_HREF__">
 </head>
 <body class="locked">
   <section class="passcode-screen" id="passcodeScreen">
     <form class="passcode-card" id="passcodeForm" autocomplete="off">
-      <div class="passcode-mark">S</div>
-      <h1>Seoi Kidsnote</h1>
+      <div class="passcode-mark" aria-hidden="true">♥</div>
+      <h1>서이의 키즈노트</h1>
       <label class="passcode-label" for="passcodeInput">가족 패스코드</label>
       <input id="passcodeInput" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="6자리">
       <p class="passcode-hint">아기생년월일 (6자리)</p>
@@ -632,18 +636,18 @@ INDEX_HTML = """<!doctype html>
     <header class="topbar">
       <div class="topbar-inner">
         <div class="brand">
-          <div class="brand-mark">S</div>
-          <h1 class="brand-title">Seoi Kidsnote</h1>
+          <div class="brand-mark" aria-hidden="true">♥</div>
+          <h1 class="brand-title">서이의 키즈노트</h1>
         </div>
         <div class="topbar-actions">
           <div class="sync-meta" id="syncMeta">동기화 확인 중</div>
-          <button class="lock-button" id="lockButton" type="button">잠금</button>
+          <button class="filter-toggle-button" id="filterToggle" type="button" aria-expanded="false" aria-controls="filterTools">필터 목록 열기</button>
         </div>
       </div>
     </header>
 
     <main class="workspace">
-      <section class="tools" aria-label="검색과 필터">
+      <section class="tools" id="filterTools" aria-label="검색과 필터" hidden>
         <label class="search-box">
           <span class="search-icon" aria-hidden="true">⌕</span>
           <input id="searchInput" type="search" placeholder="제목, 날짜, 내용 검색">
@@ -656,10 +660,13 @@ INDEX_HTML = """<!doctype html>
       <nav class="tabs" id="tabs" aria-label="Kidsnote categories"></nav>
       <section class="dashboard-grid">
         <aside class="list-panel">
-          <div class="panel-head">
-            <h2 class="panel-title" id="listTitle">알림장</h2>
-            <span class="panel-meta" id="listCount">0</span>
-          </div>
+          <button class="panel-head panel-toggle" id="listToggle" type="button" aria-expanded="true" aria-controls="entryList">
+            <span class="panel-title" id="listTitle">알림장</span>
+            <span class="panel-head-right">
+              <span class="panel-meta" id="listCount">0</span>
+              <span class="panel-chevron" id="listChevron" aria-hidden="true">▾</span>
+            </span>
+          </button>
           <div class="entry-list" id="entryList"></div>
         </aside>
         <article class="detail-panel">
@@ -765,7 +772,9 @@ body:not(.locked) .passcode-screen {
   color: #fff;
   display: grid;
   place-items: center;
+  font-size: 19px;
   font-weight: 800;
+  line-height: 1;
 }
 
 .passcode-card h1 {
@@ -848,7 +857,9 @@ body:not(.locked) .passcode-screen {
   display: grid;
   place-items: center;
   color: #fff;
+  font-size: 17px;
   font-weight: 800;
+  line-height: 1;
 }
 
 .brand-title {
@@ -870,17 +881,18 @@ body:not(.locked) .passcode-screen {
   gap: 10px;
 }
 
-.lock-button {
+.filter-toggle-button {
   min-height: 34px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
   color: var(--muted);
-  padding: 0 10px;
+  padding: 0 12px;
   font-size: 13px;
+  white-space: nowrap;
 }
 
-.lock-button:hover {
+.filter-toggle-button:hover {
   border-color: var(--accent);
   color: var(--accent);
 }
@@ -897,11 +909,15 @@ body:not(.locked) .passcode-screen {
   margin-bottom: 14px;
 }
 
+.tools[hidden] {
+  display: none;
+}
+
 .search-box {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
+  grid-template-columns: 32px minmax(0, 1fr);
   align-items: center;
-  min-height: 44px;
+  min-height: 40px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
@@ -918,7 +934,7 @@ body:not(.locked) .passcode-screen {
 .search-box input,
 .tools select,
 .clear-button {
-  min-height: 44px;
+  min-height: 40px;
   border: 1px solid var(--line);
   background: var(--surface);
   color: var(--ink);
@@ -1000,10 +1016,37 @@ body:not(.locked) .passcode-screen {
   gap: 12px;
 }
 
+.panel-toggle {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.panel-toggle:hover {
+  background: var(--surface-soft);
+}
+
+.panel-toggle:focus-visible {
+  outline: 3px solid var(--accent-soft);
+  outline-offset: -3px;
+}
+
 .panel-title {
   margin: 0;
   font-size: 16px;
   font-weight: 760;
+}
+
+.panel-head-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .panel-meta {
@@ -1012,10 +1055,20 @@ body:not(.locked) .passcode-screen {
   white-space: nowrap;
 }
 
+.panel-chevron {
+  color: var(--muted);
+  font-size: 20px;
+  line-height: 1;
+}
+
 .entry-list {
   display: grid;
   max-height: calc(100vh - 196px);
   overflow: auto;
+}
+
+.entry-list[hidden] {
+  display: none;
 }
 
 .entry {
@@ -1134,6 +1187,27 @@ body:not(.locked) .passcode-screen {
   margin: 18px 0;
 }
 
+.detail-content figure.is-lightbox-source {
+  cursor: zoom-in;
+}
+
+.detail-content figure.is-lightbox-source img {
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+@media (hover: hover) {
+  .detail-content figure.is-lightbox-source:hover img {
+    opacity: 0.9;
+    transform: scale(0.995);
+  }
+}
+
+.detail-content figure.is-lightbox-source:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 10px;
+}
+
 .detail-content figcaption {
   color: var(--muted);
   font-size: 14px;
@@ -1146,6 +1220,63 @@ body:not(.locked) .passcode-screen {
   margin: 16px 0;
   padding: 8px 14px;
   background: var(--surface-soft);
+}
+
+.post-nav {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.post-nav-button {
+  min-height: 58px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  padding: 10px 12px;
+  text-align: left;
+  display: grid;
+  gap: 4px;
+}
+
+.post-nav-button:not(:disabled):hover {
+  border-color: var(--accent);
+  background: var(--surface-soft);
+}
+
+.post-nav-button:focus-visible {
+  outline: 3px solid var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.post-nav-button:disabled {
+  color: var(--muted);
+  opacity: .55;
+}
+
+.post-nav-button.next {
+  text-align: right;
+  justify-items: end;
+}
+
+.post-nav-label {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 720;
+}
+
+.post-nav-title {
+  width: 100%;
+  font-size: 14px;
+  font-weight: 720;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .album-gallery {
@@ -1287,11 +1418,26 @@ body:not(.locked) .passcode-screen {
   }
 
   .entry-list {
-    max-height: none;
+    max-height: min(42vh, 360px);
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+
+  .detail-panel {
+    scroll-margin-top: 92px;
   }
 
   .detail-title {
     font-size: 20px;
+  }
+
+  .post-nav {
+    grid-template-columns: 1fr;
+  }
+
+  .post-nav-button.next {
+    text-align: left;
+    justify-items: start;
   }
 
   .lightbox {
@@ -1320,6 +1466,8 @@ APP_JS = """(() => {
     posts: [],
     counts: { daily: 0, album: 0, announcement: 0 },
     selectedId: null,
+    listCollapsed: false,
+    filtersOpen: false,
     lightboxItems: [],
     lightboxIndex: 0,
   };
@@ -1329,10 +1477,15 @@ APP_JS = """(() => {
   const detail = document.getElementById("detail");
   const listTitle = document.getElementById("listTitle");
   const listCount = document.getElementById("listCount");
+  const listPanel = document.querySelector(".list-panel");
+  const listToggle = document.getElementById("listToggle");
+  const listChevron = document.getElementById("listChevron");
   const syncMeta = document.getElementById("syncMeta");
   const searchInput = document.getElementById("searchInput");
   const monthFilter = document.getElementById("monthFilter");
   const clearFilters = document.getElementById("clearFilters");
+  const filterTools = document.getElementById("filterTools");
+  const filterToggle = document.getElementById("filterToggle");
   const lightbox = document.getElementById("lightbox");
   const lightboxImage = document.getElementById("lightboxImage");
   const lightboxCaption = document.getElementById("lightboxCaption");
@@ -1340,7 +1493,6 @@ APP_JS = """(() => {
   const passcodeForm = document.getElementById("passcodeForm");
   const passcodeInput = document.getElementById("passcodeInput");
   const passcodeMessage = document.getElementById("passcodeMessage");
-  const lockButton = document.getElementById("lockButton");
 
   const escapeHtml = (value) => String(value || "")
     .replaceAll("&", "&amp;")
@@ -1373,11 +1525,6 @@ APP_JS = """(() => {
   async function unlockAndLoad() {
     unlockApp();
     await loadApp();
-  }
-
-  function lockApp() {
-    window.localStorage.removeItem(UNLOCK_KEY);
-    window.location.reload();
   }
 
   async function handlePasscodeSubmit(event) {
@@ -1425,6 +1572,18 @@ APP_JS = """(() => {
     }
   }
 
+  function renderFilterPanelState() {
+    filterTools.hidden = !state.filtersOpen;
+    filterToggle.textContent = state.filtersOpen ? "필터 목록 닫기" : "필터 목록 열기";
+    filterToggle.setAttribute("aria-expanded", String(state.filtersOpen));
+  }
+
+  function toggleFilters() {
+    state.filtersOpen = !state.filtersOpen;
+    renderFilterPanelState();
+    if (state.filtersOpen) searchInput.focus();
+  }
+
   function renderMonthOptions() {
     const months = [...new Set(state.allPosts.map(monthKey).filter(Boolean))].sort().reverse();
     monthFilter.innerHTML = [
@@ -1457,10 +1616,24 @@ APP_JS = """(() => {
     state.selectedId = state.posts[0]?.id || null;
   }
 
+  function renderListCollapseState() {
+    listPanel.classList.toggle("is-collapsed", state.listCollapsed);
+    entryList.hidden = state.listCollapsed;
+    listToggle.setAttribute("aria-expanded", String(!state.listCollapsed));
+    listToggle.setAttribute("aria-label", `${activeLabel()} 목록 ${state.listCollapsed ? "열기" : "닫기"}`);
+    listChevron.textContent = state.listCollapsed ? "▸" : "▾";
+  }
+
+  function toggleList() {
+    state.listCollapsed = !state.listCollapsed;
+    renderListCollapseState();
+  }
+
   function renderList() {
     listTitle.textContent = activeLabel();
     const filters = [state.activeMonth, state.query.trim()].filter(Boolean).length;
     listCount.textContent = filters ? `${state.posts.length}개 필터됨` : `${state.posts.length}개`;
+    renderListCollapseState();
 
     if (!state.posts.length) {
       entryList.innerHTML = '<div class="empty">조건에 맞는 항목이 없습니다.</div>';
@@ -1485,25 +1658,39 @@ APP_JS = """(() => {
     }).join("");
   }
 
-  function enhanceAlbumGallery(post) {
+  function enhanceMediaLightbox(post) {
     const content = detail.querySelector(".detail-content");
-    if (!content || post.type !== "album") return;
+    if (!content) return;
 
     const figures = Array.from(content.querySelectorAll("figure"));
     const title = displayTitle(post.title);
-    const items = figures.map((figure) => {
+    const items = [];
+
+    figures.forEach((figure) => {
       const image = figure.querySelector("img");
-      if (!image) return null;
-      figure.classList.add("is-gallery-source");
-      return {
+      if (!image) return;
+      const index = items.length;
+      items.push({
         src: image.currentSrc || image.src,
         alt: image.alt || title,
         caption: figure.querySelector("figcaption")?.textContent || title,
-      };
-    }).filter(Boolean);
+      });
+
+      if (post.type === "album") {
+        figure.classList.add("is-gallery-source");
+      } else {
+        figure.classList.add("is-lightbox-source");
+        figure.dataset.galleryIndex = String(index);
+        figure.tabIndex = 0;
+        figure.setAttribute("role", "button");
+        figure.setAttribute("aria-label", `사진 ${index + 1} 크게 보기`);
+      }
+    });
 
     if (!items.length) return;
     state.lightboxItems = items;
+    if (post.type !== "album") return;
+
     const gallery = document.createElement("div");
     gallery.className = "album-gallery";
     gallery.innerHTML = items.map((item, index) => (
@@ -1514,6 +1701,71 @@ APP_JS = """(() => {
     count.textContent = `사진 ${items.length}장`;
     content.prepend(gallery);
     content.prepend(count);
+  }
+
+  function isCommentHeadingText(value) {
+    const cleaned = (value || "").replace(/\s+/g, " ").trim();
+    return cleaned.startsWith("💬 댓글") || cleaned.startsWith("댓글 (");
+  }
+
+  function cleanDetailContent(container) {
+    const sourceLinks = Array.from(container.querySelectorAll("a")).filter((link) => (
+      link.textContent.trim() === "Original Notion page"
+    ));
+    sourceLinks.forEach((link) => {
+      const paragraph = link.closest("p");
+      const divider = paragraph?.previousElementSibling;
+      paragraph?.remove();
+      if (divider?.tagName === "HR") divider.remove();
+    });
+
+    const commentHeading = Array.from(container.querySelectorAll("h2, h3, h4")).find((heading) => (
+      isCommentHeadingText(heading.textContent)
+    ));
+    if (!commentHeading) return;
+
+    let node = commentHeading;
+    while (node) {
+      const next = node.nextElementSibling;
+      node.remove();
+      node = next;
+    }
+  }
+
+  function adjacentPost(offset) {
+    const index = state.posts.findIndex((post) => post.id === state.selectedId);
+    if (index < 0) return null;
+    return state.posts[index + offset] || null;
+  }
+
+  function renderPostNav() {
+    if (state.posts.length < 2) return "";
+    const previousPost = adjacentPost(1);
+    const nextPost = adjacentPost(-1);
+
+    const button = (post, direction, label) => {
+      if (!post) {
+        return (
+          `<button class="post-nav-button ${direction}" type="button" disabled>`
+          + `<span class="post-nav-label">${label}</span>`
+          + '<span class="post-nav-title">없음</span>'
+          + '</button>'
+        );
+      }
+      return (
+        `<button class="post-nav-button ${direction}" type="button" data-nav-id="${post.id}">`
+        + `<span class="post-nav-label">${label}</span>`
+        + `<span class="post-nav-title">${escapeHtml(displayTitle(post.title))}</span>`
+        + '</button>'
+      );
+    };
+
+    return (
+      '<nav class="post-nav" aria-label="게시글 이동">'
+      + button(previousPost, "previous", "이전 글")
+      + button(nextPost, "next", "다음 글")
+      + '</nav>'
+    );
   }
 
   async function loadDetail(id) {
@@ -1530,8 +1782,11 @@ APP_JS = """(() => {
         `<h2 class="detail-title">${escapeHtml(title)}</h2>`
         + `<div class="detail-meta"><span class="badge ${post.type}">${escapeHtml(post.type_label)}</span><span>${escapeHtml(post.date)}</span></div>`
         + `<div class="detail-content">${post.content || ""}</div>`
+        + renderPostNav()
       );
-      enhanceAlbumGallery(post);
+      cleanDetailContent(detail.querySelector(".detail-content"));
+      state.lightboxItems = [];
+      enhanceMediaLightbox(post);
     } catch {
       detail.innerHTML = '<div class="error">상세 내용을 불러오지 못했습니다.</div>';
     }
@@ -1567,8 +1822,18 @@ APP_JS = """(() => {
     showLightbox(next);
   }
 
+  function scrollDetailIntoViewOnMobile() {
+    if (!window.matchMedia("(max-width: 860px)").matches) return;
+    detail.closest(".detail-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function scrollDetailToTop() {
+    detail.closest(".detail-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   async function loadApp() {
     renderTabs();
+    renderFilterPanelState();
     entryList.innerHTML = '<div class="empty">불러오는 중</div>';
 
     try {
@@ -1594,9 +1859,15 @@ APP_JS = """(() => {
     refreshView();
   });
 
+  listToggle.addEventListener("click", toggleList);
+  filterToggle.addEventListener("click", toggleFilters);
+
   entryList.addEventListener("click", (event) => {
     const target = event.target.closest("button[data-id]");
-    if (target) loadDetail(target.dataset.id);
+    if (target) {
+      loadDetail(target.dataset.id);
+      scrollDetailIntoViewOnMobile();
+    }
   });
 
   searchInput.addEventListener("input", (event) => {
@@ -1620,8 +1891,23 @@ APP_JS = """(() => {
   });
 
   detail.addEventListener("click", (event) => {
-    const target = event.target.closest("button[data-gallery-index]");
+    const navTarget = event.target.closest("button[data-nav-id]");
+    if (navTarget) {
+      loadDetail(navTarget.dataset.navId);
+      scrollDetailToTop();
+      return;
+    }
+
+    const target = event.target.closest("[data-gallery-index]");
     if (target) showLightbox(Number(target.dataset.galleryIndex));
+  });
+
+  detail.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const target = event.target.closest("figure[data-gallery-index]");
+    if (!target) return;
+    event.preventDefault();
+    showLightbox(Number(target.dataset.galleryIndex));
   });
 
   lightbox.addEventListener("click", (event) => {
@@ -1637,7 +1923,6 @@ APP_JS = """(() => {
   });
 
   passcodeForm.addEventListener("submit", handlePasscodeSubmit);
-  lockButton.addEventListener("click", lockApp);
 
   if (window.localStorage.getItem(UNLOCK_KEY) === "1") {
     unlockAndLoad();
