@@ -596,18 +596,43 @@ INDEX_HTML = """<!doctype html>
   <title>Seoi Kidsnote</title>
   <link rel="stylesheet" href="/assets/styles.css">
 </head>
-<body>
-  <div class="app-shell">
+<body class="locked">
+  <section class="passcode-screen" id="passcodeScreen">
+    <form class="passcode-card" id="passcodeForm" autocomplete="off">
+      <div class="passcode-mark">S</div>
+      <h1>Seoi Kidsnote</h1>
+      <label class="passcode-label" for="passcodeInput">가족 패스코드</label>
+      <input id="passcodeInput" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="6자리">
+      <button class="passcode-submit" type="submit">열기</button>
+      <p class="passcode-message" id="passcodeMessage" aria-live="polite"></p>
+    </form>
+  </section>
+
+  <div class="app-shell" id="appShell" aria-hidden="true">
     <header class="topbar">
       <div class="topbar-inner">
         <div class="brand">
           <div class="brand-mark">S</div>
           <h1 class="brand-title">Seoi Kidsnote</h1>
         </div>
+        <div class="topbar-actions">
+          <div class="sync-meta" id="syncMeta">동기화 확인 중</div>
+          <button class="lock-button" id="lockButton" type="button">잠금</button>
+        </div>
       </div>
     </header>
 
     <main class="workspace">
+      <section class="tools" aria-label="검색과 필터">
+        <label class="search-box">
+          <span class="search-icon" aria-hidden="true">⌕</span>
+          <input id="searchInput" type="search" placeholder="제목, 날짜, 내용 검색">
+        </label>
+        <select id="monthFilter" aria-label="월별 필터">
+          <option value="">전체 기간</option>
+        </select>
+        <button class="clear-button" id="clearFilters" type="button">초기화</button>
+      </section>
       <nav class="tabs" id="tabs" aria-label="Kidsnote categories"></nav>
       <section class="dashboard-grid">
         <aside class="list-panel">
@@ -625,16 +650,976 @@ INDEX_HTML = """<!doctype html>
       </section>
     </main>
   </div>
+  <div class="lightbox" id="lightbox" hidden>
+    <button class="lightbox-close" type="button" aria-label="닫기">&times;</button>
+    <button class="lightbox-nav lightbox-prev" type="button" aria-label="이전 사진">&#8249;</button>
+    <figure class="lightbox-frame">
+      <img id="lightboxImage" alt="">
+      <figcaption id="lightboxCaption"></figcaption>
+    </figure>
+    <button class="lightbox-nav lightbox-next" type="button" aria-label="다음 사진">&#8250;</button>
+  </div>
   <script src="/assets/app.js"></script>
 </body>
 </html>
 """
 
 
-STYLES_CSS = """:root{color-scheme:light;--bg:#f6f7f2;--surface:#fff;--ink:#23251f;--muted:#6a6f63;--line:#dfe4d8;--accent:#276c5b;--accent-soft:#e5f1ec;--album:#b56b2d;--notice:#365f91;--shadow:0 16px 36px rgba(30,36,28,.08)}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:16px;line-height:1.55}button,a{font:inherit}.app-shell{min-height:100vh}.topbar{border-bottom:1px solid var(--line);background:rgba(255,255,255,.9);backdrop-filter:blur(12px);position:sticky;top:0;z-index:10}.topbar-inner{width:min(1180px,calc(100% - 32px));margin:0 auto;min-height:68px;display:flex;align-items:center;gap:16px}.brand{display:flex;align-items:center;gap:12px;min-width:0}.brand-mark{width:36px;height:36px;border-radius:8px;background:linear-gradient(135deg,var(--accent),#87a85b);display:grid;place-items:center;color:#fff;font-weight:800}.brand-title{margin:0;font-size:20px;font-weight:750}.workspace{width:min(1180px,calc(100% - 32px));margin:24px auto 40px}.tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}.tab{border:1px solid var(--line);background:var(--surface);color:var(--muted);border-radius:8px;padding:9px 13px;cursor:pointer;min-height:42px}.tab[aria-selected=true]{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:700}.tab-count{margin-left:6px;opacity:.8}.dashboard-grid{display:grid;grid-template-columns:minmax(300px,380px) minmax(0,1fr);gap:18px;align-items:start}.list-panel,.detail-panel{background:var(--surface);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);overflow:hidden}.panel-head{min-height:54px;padding:14px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:12px}.panel-title{margin:0;font-size:16px;font-weight:750}.panel-meta{color:var(--muted);font-size:14px;white-space:nowrap}.entry-list{display:grid}.entry{width:100%;border:0;border-bottom:1px solid var(--line);background:transparent;color:inherit;display:grid;grid-template-columns:58px minmax(0,1fr);gap:12px;padding:13px 14px;text-align:left;cursor:pointer}.entry:hover,.entry[aria-current=true]{background:var(--accent-soft)}.entry-thumb{width:58px;height:58px;border-radius:8px;border:1px solid var(--line);background:#eef0ea center/cover no-repeat;display:grid;place-items:center;color:var(--muted);font-size:13px;overflow:hidden}.entry-kicker{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px;margin-bottom:3px}.badge{display:inline-flex;align-items:center;min-height:22px;border-radius:999px;padding:2px 8px;color:#fff;background:var(--notice);font-size:12px;font-weight:700}.badge.album{background:var(--album)}.badge.announcement{background:var(--accent)}.entry-title{font-size:15px;font-weight:720;line-height:1.4;overflow-wrap:anywhere}.entry-summary{margin-top:5px;color:var(--muted);font-size:14px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.detail-body{padding:20px}.detail-title{margin:0 0 8px;font-size:22px;line-height:1.35;overflow-wrap:anywhere}.detail-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:18px;color:var(--muted);font-size:14px}.detail-content{border-top:1px solid var(--line);padding-top:18px}.detail-content img,.detail-content video{display:block;max-width:100%;height:auto;border-radius:8px}.detail-content figure{margin:18px 0}.detail-content figcaption{color:var(--muted);font-size:14px;margin-top:8px}.detail-content blockquote,.detail-content .kidsnote-callout{border-left:4px solid var(--accent);margin:16px 0;padding:8px 14px;background:#f3f7f0}.empty{padding:24px 18px;color:var(--muted)}.error{padding:18px;color:#8a2d2d}@media(max-width:820px){.topbar-inner,.workspace{width:min(100% - 24px,1180px)}.dashboard-grid{grid-template-columns:1fr}.detail-title{font-size:20px}}"""
+STYLES_CSS = """:root {
+  color-scheme: light;
+  --bg: #f7f8fa;
+  --surface: #ffffff;
+  --surface-soft: #f2f5f3;
+  --ink: #20231f;
+  --muted: #68706b;
+  --line: #dce3de;
+  --accent: #28705d;
+  --accent-strong: #165341;
+  --accent-soft: #e6f2ed;
+  --album: #b45f2a;
+  --notice: #37669c;
+  --danger: #9b3434;
+  --shadow: 0 16px 40px rgba(25, 32, 28, .08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+button,
+input,
+select,
+a {
+  font: inherit;
+}
+
+button,
+select {
+  cursor: pointer;
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.locked .app-shell {
+  display: none;
+}
+
+.passcode-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+body:not(.locked) .passcode-screen {
+  display: none;
+}
+
+.passcode-card {
+  width: min(100%, 360px);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 28px;
+  display: grid;
+  gap: 12px;
+}
+
+.passcode-mark {
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+}
+
+.passcode-card h1 {
+  margin: 0 0 8px;
+  font-size: 22px;
+}
+
+.passcode-label {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.passcode-card input {
+  width: 100%;
+  min-height: 46px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 12px;
+  letter-spacing: .18em;
+}
+
+.passcode-card input:focus {
+  border-color: var(--accent);
+  outline: 3px solid var(--accent-soft);
+}
+
+.passcode-submit {
+  min-height: 46px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 720;
+}
+
+.passcode-message {
+  min-height: 22px;
+  margin: 0;
+  color: var(--danger);
+  font-size: 14px;
+}
+
+.topbar {
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 255, 255, .92);
+  backdrop-filter: blur(12px);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.topbar-inner {
+  width: min(1220px, calc(100% - 32px));
+  margin: 0 auto;
+  min-height: 68px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.brand-mark {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: var(--accent);
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-weight: 800;
+}
+
+.brand-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 760;
+  letter-spacing: 0;
+}
+
+.sync-meta {
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.lock-button {
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  padding: 0 10px;
+  font-size: 13px;
+}
+
+.lock-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.workspace {
+  width: min(1220px, calc(100% - 32px));
+  margin: 22px auto 40px;
+}
+
+.tools {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(150px, 190px) auto;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.search-box {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.search-icon {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 20px;
+}
+
+.search-box input,
+.tools select,
+.clear-button {
+  min-height: 44px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  border-radius: 8px;
+}
+
+.search-box input {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  padding: 0 12px 0 0;
+}
+
+.tools select {
+  padding: 0 12px;
+}
+
+.clear-button {
+  padding: 0 14px;
+  color: var(--muted);
+}
+
+.clear-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.tab {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  border-radius: 8px;
+  padding: 9px 13px;
+  min-height: 42px;
+}
+
+.tab[aria-selected="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 720;
+}
+
+.tab-count {
+  margin-left: 6px;
+  opacity: .82;
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 400px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.list-panel,
+.detail-panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.panel-head {
+  min-height: 54px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.panel-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 760;
+}
+
+.panel-meta {
+  color: var(--muted);
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.entry-list {
+  display: grid;
+  max-height: calc(100vh - 196px);
+  overflow: auto;
+}
+
+.entry {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  display: grid;
+  grid-template-columns: 60px minmax(0, 1fr);
+  gap: 12px;
+  padding: 13px 14px;
+  text-align: left;
+}
+
+.entry:hover,
+.entry[aria-current="true"] {
+  background: var(--accent-soft);
+}
+
+.entry-thumb {
+  width: 60px;
+  height: 60px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface-soft) center / cover no-repeat;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 13px;
+  overflow: hidden;
+}
+
+.entry-kicker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 3px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  border-radius: 999px;
+  padding: 2px 8px;
+  color: #fff;
+  background: var(--notice);
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.badge.album {
+  background: var(--album);
+}
+
+.badge.announcement {
+  background: var(--accent);
+}
+
+.entry-title {
+  display: block;
+  font-size: 15px;
+  font-weight: 720;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.entry-summary {
+  display: -webkit-box;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 14px;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.detail-body {
+  padding: 20px;
+}
+
+.detail-title {
+  margin: 0 0 8px;
+  font-size: 22px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.detail-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.detail-content {
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+}
+
+.detail-content img,
+.detail-content video {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+}
+
+.detail-content figure {
+  margin: 18px 0;
+}
+
+.detail-content figcaption {
+  color: var(--muted);
+  font-size: 14px;
+  margin-top: 8px;
+}
+
+.detail-content blockquote,
+.detail-content .kidsnote-callout {
+  border-left: 4px solid var(--accent);
+  margin: 16px 0;
+  padding: 8px 14px;
+  background: var(--surface-soft);
+}
+
+.album-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  gap: 8px;
+  margin: 0 0 18px;
+}
+
+.gallery-item {
+  position: relative;
+  border: 0;
+  border-radius: 8px;
+  aspect-ratio: 1;
+  background: var(--surface-soft) center / cover no-repeat;
+  overflow: hidden;
+}
+
+.gallery-item:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.gallery-count {
+  color: var(--muted);
+  font-size: 14px;
+  margin: 0 0 10px;
+}
+
+.is-gallery-source {
+  display: none;
+}
+
+.empty,
+.error {
+  padding: 24px 18px;
+}
+
+.empty {
+  color: var(--muted);
+}
+
+.error {
+  color: var(--danger);
+}
+
+.lightbox[hidden] {
+  display: none;
+}
+
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(10, 12, 11, .88);
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) 64px;
+  grid-template-rows: 54px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+}
+
+.lightbox-frame {
+  grid-column: 2;
+  grid-row: 2;
+  margin: 0;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+}
+
+.lightbox-frame img {
+  max-width: 100%;
+  max-height: calc(100vh - 110px);
+  border-radius: 8px;
+  object-fit: contain;
+}
+
+.lightbox-frame figcaption {
+  color: #fff;
+  font-size: 14px;
+}
+
+.lightbox button {
+  border: 0;
+  color: #fff;
+  background: rgba(255, 255, 255, .12);
+  border-radius: 8px;
+}
+
+.lightbox-close {
+  grid-column: 3;
+  grid-row: 1;
+  justify-self: end;
+  width: 42px;
+  height: 42px;
+  font-size: 24px;
+}
+
+.lightbox-nav {
+  grid-row: 2;
+  width: 48px;
+  height: 64px;
+  font-size: 38px;
+}
+
+.lightbox-prev {
+  grid-column: 1;
+}
+
+.lightbox-next {
+  grid-column: 3;
+}
+
+@media (max-width: 860px) {
+  .topbar-inner,
+  .workspace {
+    width: min(100% - 24px, 1220px);
+  }
+
+  .topbar-inner {
+    align-items: flex-start;
+    flex-direction: column;
+    justify-content: center;
+    padding: 10px 0;
+  }
+
+  .topbar-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .tools,
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .entry-list {
+    max-height: none;
+  }
+
+  .detail-title {
+    font-size: 20px;
+  }
+
+  .lightbox {
+    grid-template-columns: 44px minmax(0, 1fr) 44px;
+    padding: 8px;
+  }
+}
+"""
 
 
-APP_JS = """(()=>{const tabs=[{key:"daily",label:"알림장"},{key:"album",label:"앨범"},{key:"announcement",label:"공지"}],state={activeType:window.localStorage.getItem("kidsnote.activeType")||"daily",allPosts:[],posts:[],counts:{daily:0,album:0,announcement:0},selectedId:null},tabsNode=document.getElementById("tabs"),entryList=document.getElementById("entryList"),detail=document.getElementById("detail"),listTitle=document.getElementById("listTitle"),listCount=document.getElementById("listCount"),escapeHtml=e=>String(e||"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;"),activeLabel=()=>tabs.find(e=>e.key===state.activeType)?.label||"알림장";function renderTabs(){tabsNode.innerHTML=tabs.map(e=>`<button class="tab" type="button" data-type="${e.key}" aria-selected="${e.key===state.activeType?"true":"false"}">${e.label}<span class="tab-count">${state.counts[e.key]||0}</span></button>`).join("")}function selectPosts(){state.posts=state.allPosts.filter(e=>e.type===state.activeType),state.selectedId=state.posts[0]?.id||null}function renderList(){if(listTitle.textContent=activeLabel(),listCount.textContent=`${state.posts.length}개`,!state.posts.length){entryList.innerHTML='<div class="empty">비어 있음</div>',detail.innerHTML='<div class="empty">선택된 항목이 없습니다.</div>';return}entryList.innerHTML=state.posts.map(e=>{const t=e.id===state.selectedId?"true":"false",n=e.thumbnail_url?` style="background-image: url('${escapeHtml(e.thumbnail_url)}')"`:"",a=e.thumbnail_url?"":escapeHtml(e.type_label);return`<button class="entry" type="button" data-id="${e.id}" aria-current="${t}"><span class="entry-thumb"${n}>${a}</span><span><span class="entry-kicker"><span class="badge ${e.type}">${escapeHtml(e.type_label)}</span><span>${escapeHtml(e.date)}</span></span><span class="entry-title">${escapeHtml(e.title)}</span><span class="entry-summary">${escapeHtml(e.summary)}</span></span></button>`}).join("")}async function loadDetail(e){state.selectedId=Number(e),renderList(),detail.innerHTML='<div class="empty">불러오는 중</div>';try{const t=await fetch(`/data/posts/${state.selectedId}.json`);if(!t.ok)throw new Error("detail failed");const n=await t.json();detail.innerHTML=`<h2 class="detail-title">${escapeHtml(n.title)}</h2><div class="detail-meta"><span class="badge ${n.type}">${escapeHtml(n.type_label)}</span><span>${escapeHtml(n.date)}</span></div><div class="detail-content">${n.content||""}</div>`}catch(t){detail.innerHTML='<div class="error">상세 내용을 불러오지 못했습니다.</div>'}}async function loadApp(){renderTabs(),entryList.innerHTML='<div class="empty">불러오는 중</div>';try{const e=await fetch("/data/posts.json");if(!e.ok)throw new Error("list failed");const t=await e.json();state.allPosts=t.posts||[],state.counts=t.counts||state.counts,selectPosts(),renderTabs(),renderList(),state.selectedId&&await loadDetail(state.selectedId)}catch(e){entryList.innerHTML='<div class="error">목록을 불러오지 못했습니다.</div>',detail.innerHTML='<div class="error">상세 내용을 불러오지 못했습니다.</div>'}}tabsNode.addEventListener("click",e=>{const t=e.target.closest("button[data-type]");t&&(state.activeType=t.dataset.type,window.localStorage.setItem("kidsnote.activeType",state.activeType),selectPosts(),renderTabs(),renderList(),state.selectedId&&loadDetail(state.selectedId))}),entryList.addEventListener("click",e=>{const t=e.target.closest("button[data-id]");t&&loadDetail(t.dataset.id)}),loadApp()})();"""
+APP_JS = """(() => {
+  const PASSCODE_HASH = "ab1b686a59dab68ec51204e6ab55baa0e874902dc3e8ebe161832936d6f28ef2";
+  const UNLOCK_KEY = "seoiKidsnoteUnlocked";
+
+  const tabs = [
+    { key: "daily", label: "알림장" },
+    { key: "album", label: "앨범" },
+    { key: "announcement", label: "공지" },
+  ];
+
+  const state = {
+    activeType: window.localStorage.getItem("kidsnote.activeType") || "daily",
+    activeMonth: window.localStorage.getItem("kidsnote.activeMonth") || "",
+    query: "",
+    allPosts: [],
+    posts: [],
+    counts: { daily: 0, album: 0, announcement: 0 },
+    selectedId: null,
+    lightboxItems: [],
+    lightboxIndex: 0,
+  };
+
+  const tabsNode = document.getElementById("tabs");
+  const entryList = document.getElementById("entryList");
+  const detail = document.getElementById("detail");
+  const listTitle = document.getElementById("listTitle");
+  const listCount = document.getElementById("listCount");
+  const syncMeta = document.getElementById("syncMeta");
+  const searchInput = document.getElementById("searchInput");
+  const monthFilter = document.getElementById("monthFilter");
+  const clearFilters = document.getElementById("clearFilters");
+  const lightbox = document.getElementById("lightbox");
+  const lightboxImage = document.getElementById("lightboxImage");
+  const lightboxCaption = document.getElementById("lightboxCaption");
+  const appShell = document.getElementById("appShell");
+  const passcodeForm = document.getElementById("passcodeForm");
+  const passcodeInput = document.getElementById("passcodeInput");
+  const passcodeMessage = document.getElementById("passcodeMessage");
+  const lockButton = document.getElementById("lockButton");
+
+  const escapeHtml = (value) => String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+
+  const activeLabel = () => tabs.find((tab) => tab.key === state.activeType)?.label || "알림장";
+
+  function normalize(value) {
+    return String(value || "").toLocaleLowerCase("ko-KR");
+  }
+
+  function displayTitle(value) {
+    return String(value || "").replace(/^_\\d+\\s*/, "").trim();
+  }
+
+  async function sha256Hex(value) {
+    const bytes = new TextEncoder().encode(value);
+    const digest = await crypto.subtle.digest("SHA-256", bytes);
+    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  }
+
+  function unlockApp() {
+    document.body.classList.remove("locked");
+    appShell.removeAttribute("aria-hidden");
+  }
+
+  async function unlockAndLoad() {
+    unlockApp();
+    await loadApp();
+  }
+
+  function lockApp() {
+    window.localStorage.removeItem(UNLOCK_KEY);
+    window.location.reload();
+  }
+
+  async function handlePasscodeSubmit(event) {
+    event.preventDefault();
+    const value = passcodeInput.value.trim();
+    passcodeMessage.textContent = "";
+
+    if (value.length !== 6) {
+      passcodeMessage.textContent = "6자리 숫자를 입력해주세요.";
+      passcodeInput.focus();
+      return;
+    }
+
+    try {
+      const hash = await sha256Hex(value);
+      if (hash === PASSCODE_HASH) {
+        window.localStorage.setItem(UNLOCK_KEY, "1");
+        await unlockAndLoad();
+        return;
+      }
+      passcodeMessage.textContent = "패스코드가 맞지 않습니다.";
+      passcodeInput.select();
+    } catch {
+      passcodeMessage.textContent = "이 브라우저에서 확인할 수 없습니다.";
+    }
+  }
+
+  function monthKey(post) {
+    return String(post.date || "").slice(0, 7);
+  }
+
+  function renderSyncMeta(exportedAt) {
+    if (!exportedAt) {
+      syncMeta.textContent = "동기화 시간 없음";
+      return;
+    }
+    try {
+      const formatted = new Intl.DateTimeFormat("ko-KR", {
+        dateStyle: "medium",
+        timeStyle: "short",
+      }).format(new Date(exportedAt));
+      syncMeta.textContent = `마지막 동기화 ${formatted}`;
+    } catch {
+      syncMeta.textContent = `마지막 동기화 ${exportedAt}`;
+    }
+  }
+
+  function renderMonthOptions() {
+    const months = [...new Set(state.allPosts.map(monthKey).filter(Boolean))].sort().reverse();
+    monthFilter.innerHTML = [
+      '<option value="">전체 기간</option>',
+      ...months.map((month) => `<option value="${month}">${month}</option>`),
+    ].join("");
+    monthFilter.value = months.includes(state.activeMonth) ? state.activeMonth : "";
+    state.activeMonth = monthFilter.value;
+  }
+
+  function renderTabs() {
+    tabsNode.innerHTML = tabs.map((tab) => (
+      `<button class="tab" type="button" data-type="${tab.key}" aria-selected="${tab.key === state.activeType ? "true" : "false"}">`
+      + `${tab.label}<span class="tab-count">${state.counts[tab.key] || 0}</span></button>`
+    )).join("");
+  }
+
+  function applyFilters(keepSelection = false) {
+    const query = normalize(state.query).trim();
+    state.posts = state.allPosts.filter((post) => {
+      if (post.type !== state.activeType) return false;
+      if (state.activeMonth && monthKey(post) !== state.activeMonth) return false;
+      if (!query) return true;
+      return normalize([displayTitle(post.title), post.date, post.summary, post.type_label].join(" ")).includes(query);
+    });
+
+    if (keepSelection && state.posts.some((post) => post.id === state.selectedId)) {
+      return;
+    }
+    state.selectedId = state.posts[0]?.id || null;
+  }
+
+  function renderList() {
+    listTitle.textContent = activeLabel();
+    const filters = [state.activeMonth, state.query.trim()].filter(Boolean).length;
+    listCount.textContent = filters ? `${state.posts.length}개 필터됨` : `${state.posts.length}개`;
+
+    if (!state.posts.length) {
+      entryList.innerHTML = '<div class="empty">조건에 맞는 항목이 없습니다.</div>';
+      detail.innerHTML = '<div class="empty">선택된 항목이 없습니다.</div>';
+      return;
+    }
+
+    entryList.innerHTML = state.posts.map((post) => {
+      const selected = post.id === state.selectedId ? "true" : "false";
+      const thumb = post.thumbnail_url ? ` style="background-image: url('${escapeHtml(post.thumbnail_url)}')"` : "";
+      const fallback = post.thumbnail_url ? "" : escapeHtml(post.type_label);
+      const title = displayTitle(post.title);
+      return (
+        `<button class="entry" type="button" data-id="${post.id}" aria-current="${selected}">`
+        + `<span class="entry-thumb"${thumb}>${fallback}</span>`
+        + "<span>"
+        + `<span class="entry-kicker"><span class="badge ${post.type}">${escapeHtml(post.type_label)}</span><span>${escapeHtml(post.date)}</span></span>`
+        + `<span class="entry-title">${escapeHtml(title)}</span>`
+        + `<span class="entry-summary">${escapeHtml(post.summary)}</span>`
+        + "</span></button>"
+      );
+    }).join("");
+  }
+
+  function enhanceAlbumGallery(post) {
+    const content = detail.querySelector(".detail-content");
+    if (!content || post.type !== "album") return;
+
+    const figures = Array.from(content.querySelectorAll("figure"));
+    const title = displayTitle(post.title);
+    const items = figures.map((figure) => {
+      const image = figure.querySelector("img");
+      if (!image) return null;
+      figure.classList.add("is-gallery-source");
+      return {
+        src: image.currentSrc || image.src,
+        alt: image.alt || title,
+        caption: figure.querySelector("figcaption")?.textContent || title,
+      };
+    }).filter(Boolean);
+
+    if (!items.length) return;
+    state.lightboxItems = items;
+    const gallery = document.createElement("div");
+    gallery.className = "album-gallery";
+    gallery.innerHTML = items.map((item, index) => (
+      `<button class="gallery-item" type="button" data-gallery-index="${index}" aria-label="사진 ${index + 1} 크게 보기" style="background-image: url('${escapeHtml(item.src)}')"></button>`
+    )).join("");
+    const count = document.createElement("p");
+    count.className = "gallery-count";
+    count.textContent = `사진 ${items.length}장`;
+    content.prepend(gallery);
+    content.prepend(count);
+  }
+
+  async function loadDetail(id) {
+    state.selectedId = Number(id);
+    renderList();
+    detail.innerHTML = '<div class="empty">불러오는 중</div>';
+
+    try {
+      const response = await fetch(`/data/posts/${state.selectedId}.json`);
+      if (!response.ok) throw new Error("detail failed");
+      const post = await response.json();
+      const title = displayTitle(post.title);
+      detail.innerHTML = (
+        `<h2 class="detail-title">${escapeHtml(title)}</h2>`
+        + `<div class="detail-meta"><span class="badge ${post.type}">${escapeHtml(post.type_label)}</span><span>${escapeHtml(post.date)}</span></div>`
+        + `<div class="detail-content">${post.content || ""}</div>`
+      );
+      enhanceAlbumGallery(post);
+    } catch {
+      detail.innerHTML = '<div class="error">상세 내용을 불러오지 못했습니다.</div>';
+    }
+  }
+
+  function refreshView(keepSelection = false) {
+    applyFilters(keepSelection);
+    renderTabs();
+    renderList();
+    if (state.selectedId) {
+      loadDetail(state.selectedId);
+    }
+  }
+
+  function showLightbox(index) {
+    const item = state.lightboxItems[index];
+    if (!item) return;
+    state.lightboxIndex = index;
+    lightboxImage.src = item.src;
+    lightboxImage.alt = item.alt;
+    lightboxCaption.textContent = `${index + 1} / ${state.lightboxItems.length} · ${item.caption}`;
+    lightbox.hidden = false;
+  }
+
+  function closeLightbox() {
+    lightbox.hidden = true;
+    lightboxImage.removeAttribute("src");
+  }
+
+  function moveLightbox(delta) {
+    if (!state.lightboxItems.length || lightbox.hidden) return;
+    const next = (state.lightboxIndex + delta + state.lightboxItems.length) % state.lightboxItems.length;
+    showLightbox(next);
+  }
+
+  async function loadApp() {
+    renderTabs();
+    entryList.innerHTML = '<div class="empty">불러오는 중</div>';
+
+    try {
+      const response = await fetch("/data/posts.json");
+      if (!response.ok) throw new Error("list failed");
+      const manifest = await response.json();
+      state.allPosts = manifest.posts || [];
+      state.counts = manifest.counts || state.counts;
+      renderSyncMeta(manifest.exported_at);
+      renderMonthOptions();
+      refreshView();
+    } catch {
+      entryList.innerHTML = '<div class="error">목록을 불러오지 못했습니다.</div>';
+      detail.innerHTML = '<div class="error">상세 내용을 불러오지 못했습니다.</div>';
+    }
+  }
+
+  tabsNode.addEventListener("click", (event) => {
+    const target = event.target.closest("button[data-type]");
+    if (!target) return;
+    state.activeType = target.dataset.type;
+    window.localStorage.setItem("kidsnote.activeType", state.activeType);
+    refreshView();
+  });
+
+  entryList.addEventListener("click", (event) => {
+    const target = event.target.closest("button[data-id]");
+    if (target) loadDetail(target.dataset.id);
+  });
+
+  searchInput.addEventListener("input", (event) => {
+    state.query = event.target.value;
+    refreshView(true);
+  });
+
+  monthFilter.addEventListener("change", (event) => {
+    state.activeMonth = event.target.value;
+    window.localStorage.setItem("kidsnote.activeMonth", state.activeMonth);
+    refreshView();
+  });
+
+  clearFilters.addEventListener("click", () => {
+    state.query = "";
+    state.activeMonth = "";
+    searchInput.value = "";
+    monthFilter.value = "";
+    window.localStorage.removeItem("kidsnote.activeMonth");
+    refreshView();
+  });
+
+  detail.addEventListener("click", (event) => {
+    const target = event.target.closest("button[data-gallery-index]");
+    if (target) showLightbox(Number(target.dataset.galleryIndex));
+  });
+
+  lightbox.addEventListener("click", (event) => {
+    if (event.target === lightbox || event.target.closest(".lightbox-close")) closeLightbox();
+    if (event.target.closest(".lightbox-prev")) moveLightbox(-1);
+    if (event.target.closest(".lightbox-next")) moveLightbox(1);
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeLightbox();
+    if (event.key === "ArrowLeft") moveLightbox(-1);
+    if (event.key === "ArrowRight") moveLightbox(1);
+  });
+
+  passcodeForm.addEventListener("submit", handlePasscodeSubmit);
+  lockButton.addEventListener("click", lockApp);
+
+  if (window.localStorage.getItem(UNLOCK_KEY) === "1") {
+    unlockAndLoad();
+  } else {
+    passcodeInput.focus();
+  }
+})();
+"""
 
 
 HEADERS = """/data/*
