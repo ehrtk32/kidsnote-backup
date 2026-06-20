@@ -1,0 +1,98 @@
+name: Seoi Kidsnote static site
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "최근 N개만 정적 export 테스트. 전체 배포면 비워두세요."
+        required: false
+        default: ""
+      deploy:
+        description: "Cloudflare Pages 배포까지 실행할지 선택"
+        required: true
+        default: "on"
+        type: choice
+        options: ["on", "off"]
+  schedule:
+    # 04:30 KST. GitHub cron uses UTC.
+    - cron: "30 19 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: seoi-kidsnote-static
+  cancel-in-progress: false
+
+jobs:
+  export-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install export dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+
+      - name: Export Notion data to static files
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          PYTHONUNBUFFERED: "1"
+        run: |
+          set -eu
+          ARGS=()
+          if [ -n "${{ inputs.limit }}" ]; then
+            ARGS+=( "--limit" "${{ inputs.limit }}" )
+          fi
+          python static-export/export_static_site.py "${ARGS[@]}"
+
+      - name: Check Cloudflare Pages limits
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(Path("static-export/dist/export-report.json").read_text())
+          print(json.dumps(report, ensure_ascii=False, indent=2))
+          if not report.get("pages_file_limit_ok"):
+              raise SystemExit("Cloudflare Pages file count limit exceeded")
+          if not report.get("pages_file_size_limit_ok"):
+              raise SystemExit("Cloudflare Pages single file size limit exceeded")
+          if report.get("missing_media_count", 0):
+              raise SystemExit("Some Notion media files were not downloaded")
+          PY
+
+      - name: Deploy to Cloudflare Pages
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy == 'on' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID || '88b28a9c6734bd6185852a2804db5469' }}
+        run: |
+          set -eu
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            echo "::error::Missing GitHub secret: CLOUDFLARE_API_TOKEN"
+            exit 1
+          fi
+          if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+            echo "::error::Missing Cloudflare Account ID"
+            exit 1
+          fi
+          npx --yes wrangler pages deploy static-export/dist \
+            --project-name seoi-kidsnote \
+            --branch main \
+            --commit-dirty=true
