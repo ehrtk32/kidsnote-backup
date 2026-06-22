@@ -82,21 +82,12 @@ on:
       # were removed at the same time as use_ai_features for the same
       # single-source-of-truth reason — the cron path never had access
       # to them anyway, so keeping them as inputs was misleading.
-  # Auto-resume: a 1-year backfill can take 18-30 hours of compute,
-  # but a GitHub-hosted runner caps a single job at 6 hours. Without
-  # cron, the user would have to manually re-trigger after every cap.
-  # With this schedule the workflow self-resumes every 4 hours; the
-  # script tracks elapsed time and exits cleanly at 5h30m so the next
-  # cron run can pick up via dedup. Once the backup is complete each
-  # cron run finishes in ~1-2 minutes (no new alimnotas to process).
-  # 2026-05-25: cron interval widened 4h → 6h. Each cycle does ~5h work
-  # (publish loop + dashboards within the 6h GHA cap). At 4h interval,
-  # consecutive cycles queued up and the older ones got auto-cancelled —
-  # losing in-flight Notion commits and confusing operators ("backup
-  # stopped at date X"). At 6h interval, each cycle has time to drain
-  # before the next one fires.
+  # Runs every 3 hours. GitHub cron uses UTC, so this maps to
+  # 00:15 / 03:15 / 06:15 / 09:15 / 12:15 / 15:15 / 18:15 / 21:15 KST.
+  # The static site workflow runs after this workflow succeeds, so the
+  # visible Pages site is rebuilt only after Notion has been updated.
   schedule:
-    - cron: "15 */6 * * *"
+    - cron: "15 */3 * * *"
 
 permissions:
   contents: read
