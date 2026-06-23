@@ -1,7 +1,10 @@
 # Kidsnote → Notion mirror
 #
-# MANUAL EXECUTION ONLY. Kidsnote's login flow can no longer be driven by
-# a headless HTTP client (the page is a Next.js SPA). So the workflow
+# Recreated at this new workflow path on 2026-06-23 to refresh GitHub
+# Actions schedule registration after scheduled runs stopped appearing.
+#
+# COOKIE-BASED EXECUTION. Kidsnote's login flow can no longer be driven by
+# a headless HTTP client (the page is a Next.js SPA), so the workflow
 # relies on a `sessionid` cookie the operator extracts manually from a
 # logged-in browser session (Chrome F12 → Application → Cookies) and
 # stores in the KIDSNOTE_SESSION_COOKIE secret. That cookie typically
