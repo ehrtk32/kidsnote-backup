@@ -1,8 +1,5 @@
 # Kidsnote → Notion mirror
 #
-# Recreated at this new workflow path on 2026-06-23 to refresh GitHub
-# Actions schedule registration after scheduled runs stopped appearing.
-#
 # COOKIE-BASED EXECUTION. Kidsnote's login flow can no longer be driven by
 # a headless HTTP client (the page is a Next.js SPA), so the workflow
 # relies on a `sessionid` cookie the operator extracts manually from a
@@ -85,12 +82,12 @@ on:
       # were removed at the same time as use_ai_features for the same
       # single-source-of-truth reason — the cron path never had access
       # to them anyway, so keeping them as inputs was misleading.
-  # Runs every 3 hours. GitHub cron uses UTC, so this maps to
-  # 00:37 / 03:37 / 06:37 / 09:37 / 12:37 / 15:37 / 18:37 / 21:37 KST.
+  # Runs every 6 hours. GitHub cron uses UTC, so this maps to
+  # 03:15 / 09:15 / 15:15 / 21:15 KST.
   # The static site workflow runs after this workflow succeeds, so the
   # visible Pages site is rebuilt only after Notion has been updated.
   schedule:
-    - cron: "37 */3 * * *"
+    - cron: "15 */6 * * *"
 
 permissions:
   contents: read
