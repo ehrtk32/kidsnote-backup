@@ -678,10 +678,20 @@ INDEX_HTML = """<!doctype html>
     </main>
   </div>
   <div class="lightbox" id="lightbox" hidden>
-    <button class="lightbox-close" type="button" aria-label="닫기">&times;</button>
+    <div class="lightbox-top-actions">
+      <button class="lightbox-download" type="button" aria-label="사진 다운로드">⤓</button>
+      <button class="lightbox-close" type="button" aria-label="닫기">&times;</button>
+    </div>
+    <div class="lightbox-toolbar" aria-label="사진 확대 컨트롤">
+      <button class="lightbox-zoom-out" type="button" aria-label="축소">−</button>
+      <button class="lightbox-zoom-reset" id="lightboxZoomValue" type="button" aria-label="확대 초기화">100%</button>
+      <button class="lightbox-zoom-in" type="button" aria-label="확대">+</button>
+    </div>
     <button class="lightbox-nav lightbox-prev" type="button" aria-label="이전 사진">&#8249;</button>
     <figure class="lightbox-frame">
-      <img id="lightboxImage" alt="">
+      <div class="lightbox-image-wrap" id="lightboxImageWrap">
+        <img id="lightboxImage" alt="" draggable="false">
+      </div>
       <figcaption id="lightboxCaption"></figcaption>
     </figure>
     <button class="lightbox-nav lightbox-next" type="button" aria-label="다음 사진">&#8250;</button>
@@ -964,18 +974,23 @@ body:not(.locked) .passcode-screen {
 
 .tabs {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   flex-wrap: wrap;
   margin-bottom: 16px;
+  padding-top: 8px;
+  padding-right: 8px;
 }
 
 .tab {
+  position: relative;
   border: 1px solid var(--line);
   background: var(--surface);
   color: var(--muted);
   border-radius: 8px;
   padding: 9px 13px;
   min-height: 42px;
+  display: inline-flex;
+  align-items: center;
 }
 
 .tab[aria-selected="true"] {
@@ -988,6 +1003,25 @@ body:not(.locked) .passcode-screen {
 .tab-count {
   margin-left: 6px;
   opacity: .82;
+}
+
+.tab-new-count {
+  position: absolute;
+  top: -9px;
+  right: -9px;
+  display: grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  background: #d9342b;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 820;
+  line-height: 1;
+  box-shadow: 0 2px 6px rgba(20, 24, 22, .2);
 }
 
 .dashboard-grid {
@@ -1129,6 +1163,19 @@ body:not(.locked) .passcode-screen {
 
 .badge.announcement {
   background: var(--accent);
+}
+
+.new-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  border-radius: 999px;
+  padding: 1px 7px;
+  background: #d9342b;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 820;
+  line-height: 1;
 }
 
 .entry-title {
@@ -1346,21 +1393,57 @@ body:not(.locked) .passcode-screen {
   margin: 0;
   min-width: 0;
   min-height: 0;
+  height: 100%;
   display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
   justify-items: center;
   gap: 10px;
 }
 
-.lightbox-frame img {
+.lightbox-image-wrap {
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.lightbox-image-wrap.is-zoomed {
+  align-items: flex-start;
+  justify-content: flex-start;
+  cursor: grab;
+  touch-action: none;
+}
+
+.lightbox-image-wrap img {
+  display: block;
   max-width: 100%;
-  max-height: calc(100vh - 110px);
+  max-height: 100%;
   border-radius: 8px;
   object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.lightbox-image-wrap.is-zoomed img {
+  max-width: none;
+  max-height: none;
+  cursor: inherit;
+}
+
+.lightbox-image-wrap.is-dragging,
+.lightbox-image-wrap.is-dragging img {
+  cursor: grabbing;
 }
 
 .lightbox-frame figcaption {
   color: #fff;
   font-size: 14px;
+  min-height: 22px;
+  text-align: center;
 }
 
 .lightbox button {
@@ -1370,13 +1453,56 @@ body:not(.locked) .passcode-screen {
   border-radius: 8px;
 }
 
-.lightbox-close {
+.lightbox button:disabled {
+  cursor: default;
+  opacity: .38;
+}
+
+.lightbox-top-actions {
   grid-column: 3;
   grid-row: 1;
   justify-self: end;
+  display: flex;
+  gap: 6px;
+}
+
+.lightbox-top-actions button {
   width: 42px;
   height: 42px;
+}
+
+.lightbox-download {
+  font-size: 22px;
+  font-weight: 760;
+}
+
+.lightbox-close {
   font-size: 24px;
+}
+
+.lightbox-toolbar {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: center;
+  align-self: center;
+  display: flex;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .08);
+}
+
+.lightbox-toolbar button {
+  min-width: 40px;
+  height: 36px;
+  padding: 0 12px;
+  font-size: 18px;
+  font-weight: 760;
+}
+
+.lightbox-toolbar .lightbox-zoom-reset {
+  min-width: 66px;
+  font-size: 14px;
 }
 
 .lightbox-nav {
@@ -1444,6 +1570,12 @@ body:not(.locked) .passcode-screen {
     grid-template-columns: 44px minmax(0, 1fr) 44px;
     padding: 8px;
   }
+
+  .lightbox-toolbar button {
+    min-width: 38px;
+    height: 34px;
+    padding: 0 10px;
+  }
 }
 """
 
@@ -1457,6 +1589,9 @@ APP_JS = """(() => {
     { key: "album", label: "앨범" },
     { key: "announcement", label: "공지" },
   ];
+  const LIGHTBOX_MIN_ZOOM = 1;
+  const LIGHTBOX_MAX_ZOOM = 4;
+  const LIGHTBOX_ZOOM_STEP = 0.5;
 
   const state = {
     activeType: window.localStorage.getItem("kidsnote.activeType") || "daily",
@@ -1465,11 +1600,15 @@ APP_JS = """(() => {
     allPosts: [],
     posts: [],
     counts: { daily: 0, album: 0, announcement: 0 },
+    newCounts: { daily: 0, album: 0, announcement: 0 },
+    recentDateKeys: recentDateKeys(),
     selectedId: null,
     listCollapsed: false,
     filtersOpen: false,
     lightboxItems: [],
     lightboxIndex: 0,
+    lightboxZoom: 1,
+    lightboxDrag: null,
   };
 
   const tabsNode = document.getElementById("tabs");
@@ -1487,8 +1626,13 @@ APP_JS = """(() => {
   const filterTools = document.getElementById("filterTools");
   const filterToggle = document.getElementById("filterToggle");
   const lightbox = document.getElementById("lightbox");
+  const lightboxImageWrap = document.getElementById("lightboxImageWrap");
   const lightboxImage = document.getElementById("lightboxImage");
   const lightboxCaption = document.getElementById("lightboxCaption");
+  const lightboxZoomValue = document.getElementById("lightboxZoomValue");
+  const lightboxZoomOut = document.querySelector(".lightbox-zoom-out");
+  const lightboxZoomIn = document.querySelector(".lightbox-zoom-in");
+  const lightboxDownload = document.querySelector(".lightbox-download");
   const appShell = document.getElementById("appShell");
   const passcodeForm = document.getElementById("passcodeForm");
   const passcodeInput = document.getElementById("passcodeInput");
@@ -1509,6 +1653,36 @@ APP_JS = """(() => {
 
   function displayTitle(value) {
     return String(value || "").replace(/^_\\d+\\s*/, "").trim();
+  }
+
+  function koreaDateKey(date) {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Seoul",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(date).reduce((acc, part) => {
+      acc[part.type] = part.value;
+      return acc;
+    }, {});
+    return `${parts.year}.${parts.month}.${parts.day}`;
+  }
+
+  function recentDateKeys() {
+    const now = new Date();
+    const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    return new Set([koreaDateKey(now), koreaDateKey(yesterday)]);
+  }
+
+  function isNewPost(post) {
+    return state.recentDateKeys.has(String(post.date || ""));
+  }
+
+  function countNewPosts(posts) {
+    return posts.reduce((counts, post) => {
+      if (isNewPost(post)) counts[post.type] = (counts[post.type] || 0) + 1;
+      return counts;
+    }, { daily: 0, album: 0, announcement: 0 });
   }
 
   async function sha256Hex(value) {
@@ -1597,7 +1771,8 @@ APP_JS = """(() => {
   function renderTabs() {
     tabsNode.innerHTML = tabs.map((tab) => (
       `<button class="tab" type="button" data-type="${tab.key}" aria-selected="${tab.key === state.activeType ? "true" : "false"}">`
-      + `${tab.label}<span class="tab-count">${state.counts[tab.key] || 0}</span></button>`
+      + `${tab.label}<span class="tab-count">${state.counts[tab.key] || 0}</span>`
+      + `${state.newCounts[tab.key] ? `<span class="tab-new-count" aria-label="오늘 업데이트 ${state.newCounts[tab.key]}개">${state.newCounts[tab.key]}</span>` : ""}</button>`
     )).join("");
   }
 
@@ -1646,11 +1821,12 @@ APP_JS = """(() => {
       const thumb = post.thumbnail_url ? ` style="background-image: url('${escapeHtml(post.thumbnail_url)}')"` : "";
       const fallback = post.thumbnail_url ? "" : escapeHtml(post.type_label);
       const title = displayTitle(post.title);
+      const newMarker = isNewPost(post) ? '<span class="new-pill">NEW</span>' : "";
       return (
         `<button class="entry" type="button" data-id="${post.id}" aria-current="${selected}">`
         + `<span class="entry-thumb"${thumb}>${fallback}</span>`
         + "<span>"
-        + `<span class="entry-kicker"><span class="badge ${post.type}">${escapeHtml(post.type_label)}</span><span>${escapeHtml(post.date)}</span></span>`
+        + `<span class="entry-kicker"><span class="badge ${post.type}">${escapeHtml(post.type_label)}</span><span>${escapeHtml(post.date)}</span>${newMarker}</span>`
         + `<span class="entry-title">${escapeHtml(title)}</span>`
         + `<span class="entry-summary">${escapeHtml(post.summary)}</span>`
         + "</span></button>"
@@ -1778,9 +1954,10 @@ APP_JS = """(() => {
       if (!response.ok) throw new Error("detail failed");
       const post = await response.json();
       const title = displayTitle(post.title);
+      const newMarker = isNewPost(post) ? '<span class="new-pill">NEW</span>' : "";
       detail.innerHTML = (
         `<h2 class="detail-title">${escapeHtml(title)}</h2>`
-        + `<div class="detail-meta"><span class="badge ${post.type}">${escapeHtml(post.type_label)}</span><span>${escapeHtml(post.date)}</span></div>`
+        + `<div class="detail-meta"><span class="badge ${post.type}">${escapeHtml(post.type_label)}</span><span>${escapeHtml(post.date)}</span>${newMarker}</div>`
         + `<div class="detail-content">${post.content || ""}</div>`
         + renderPostNav()
       );
@@ -1801,18 +1978,187 @@ APP_JS = """(() => {
     }
   }
 
+  function clampZoom(value) {
+    return Math.min(LIGHTBOX_MAX_ZOOM, Math.max(LIGHTBOX_MIN_ZOOM, value));
+  }
+
+  function lightboxFitSize() {
+    const naturalWidth = lightboxImage.naturalWidth || 1;
+    const naturalHeight = lightboxImage.naturalHeight || 1;
+    const viewportWidth = Math.max(1, lightboxImageWrap.clientWidth);
+    const viewportHeight = Math.max(1, lightboxImageWrap.clientHeight);
+    const ratio = Math.min(viewportWidth / naturalWidth, viewportHeight / naturalHeight, 1);
+    return {
+      width: Math.max(1, Math.round(naturalWidth * ratio)),
+      height: Math.max(1, Math.round(naturalHeight * ratio)),
+    };
+  }
+
+  function lightboxAnchorFromEvent(event) {
+    const wrapRect = lightboxImageWrap.getBoundingClientRect();
+    const imageRect = lightboxImage.getBoundingClientRect();
+    return {
+      x: Math.min(1, Math.max(0, (event.clientX - imageRect.left) / Math.max(1, imageRect.width))),
+      y: Math.min(1, Math.max(0, (event.clientY - imageRect.top) / Math.max(1, imageRect.height))),
+      offsetX: event.clientX - wrapRect.left,
+      offsetY: event.clientY - wrapRect.top,
+    };
+  }
+
+  function renderLightboxZoom(options = {}) {
+    const previousCenter = options.preserveCenter ? {
+      x: (lightboxImageWrap.scrollLeft + lightboxImageWrap.clientWidth / 2) / Math.max(1, lightboxImageWrap.scrollWidth),
+      y: (lightboxImageWrap.scrollTop + lightboxImageWrap.clientHeight / 2) / Math.max(1, lightboxImageWrap.scrollHeight),
+    } : null;
+    const pointerAnchor = options.anchor || null;
+    const size = lightboxFitSize();
+    lightboxImage.style.width = `${Math.round(size.width * state.lightboxZoom)}px`;
+    lightboxImage.style.height = `${Math.round(size.height * state.lightboxZoom)}px`;
+    lightboxImageWrap.classList.toggle("is-zoomed", state.lightboxZoom > LIGHTBOX_MIN_ZOOM);
+    lightboxZoomValue.textContent = `${Math.round(state.lightboxZoom * 100)}%`;
+    lightboxZoomOut.disabled = state.lightboxZoom <= LIGHTBOX_MIN_ZOOM;
+    lightboxZoomIn.disabled = state.lightboxZoom >= LIGHTBOX_MAX_ZOOM;
+
+    window.requestAnimationFrame(() => {
+      if (pointerAnchor) {
+        lightboxImageWrap.scrollLeft = lightboxImage.offsetWidth * pointerAnchor.x - pointerAnchor.offsetX;
+        lightboxImageWrap.scrollTop = lightboxImage.offsetHeight * pointerAnchor.y - pointerAnchor.offsetY;
+      } else if (previousCenter) {
+        lightboxImageWrap.scrollLeft = lightboxImageWrap.scrollWidth * previousCenter.x - lightboxImageWrap.clientWidth / 2;
+        lightboxImageWrap.scrollTop = lightboxImageWrap.scrollHeight * previousCenter.y - lightboxImageWrap.clientHeight / 2;
+      } else {
+        lightboxImageWrap.scrollLeft = 0;
+        lightboxImageWrap.scrollTop = 0;
+      }
+    });
+  }
+
+  function resetLightboxZoom() {
+    state.lightboxZoom = LIGHTBOX_MIN_ZOOM;
+    renderLightboxZoom();
+  }
+
+  function changeLightboxZoom(delta, anchor = null) {
+    if (lightbox.hidden) return;
+    const next = clampZoom(state.lightboxZoom + delta);
+    if (next === state.lightboxZoom) return;
+    state.lightboxZoom = next;
+    renderLightboxZoom(anchor ? { anchor } : { preserveCenter: true });
+  }
+
+  function toggleLightboxZoom(anchor = null) {
+    if (lightbox.hidden) return;
+    state.lightboxZoom = state.lightboxZoom > LIGHTBOX_MIN_ZOOM ? LIGHTBOX_MIN_ZOOM : 2;
+    renderLightboxZoom(anchor && state.lightboxZoom > LIGHTBOX_MIN_ZOOM ? { anchor } : { preserveCenter: state.lightboxZoom > LIGHTBOX_MIN_ZOOM });
+  }
+
+  function canDragLightboxImage() {
+    return state.lightboxZoom > LIGHTBOX_MIN_ZOOM
+      && (lightboxImageWrap.scrollWidth > lightboxImageWrap.clientWidth || lightboxImageWrap.scrollHeight > lightboxImageWrap.clientHeight);
+  }
+
+  function startLightboxDrag(event) {
+    if (event.button !== 0 || lightbox.hidden || !canDragLightboxImage()) return;
+    event.preventDefault();
+    state.lightboxDrag = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      scrollLeft: lightboxImageWrap.scrollLeft,
+      scrollTop: lightboxImageWrap.scrollTop,
+    };
+    lightboxImageWrap.classList.add("is-dragging");
+    try {
+      lightboxImageWrap.setPointerCapture?.(event.pointerId);
+    } catch {
+      // Synthetic pointer events in tests may not have an active pointer capture target.
+    }
+  }
+
+  function moveLightboxDrag(event) {
+    if (!state.lightboxDrag || event.pointerId !== state.lightboxDrag.pointerId) return;
+    event.preventDefault();
+    lightboxImageWrap.scrollLeft = state.lightboxDrag.scrollLeft - (event.clientX - state.lightboxDrag.x);
+    lightboxImageWrap.scrollTop = state.lightboxDrag.scrollTop - (event.clientY - state.lightboxDrag.y);
+  }
+
+  function endLightboxDrag(event) {
+    if (!state.lightboxDrag || event.pointerId !== state.lightboxDrag.pointerId) return;
+    if (lightboxImageWrap.hasPointerCapture?.(event.pointerId)) {
+      lightboxImageWrap.releasePointerCapture(event.pointerId);
+    }
+    state.lightboxDrag = null;
+    lightboxImageWrap.classList.remove("is-dragging");
+  }
+
+  function handleLightboxWheel(event) {
+    if (lightbox.hidden) return;
+    event.preventDefault();
+    const delta = event.deltaY < 0 ? LIGHTBOX_ZOOM_STEP : -LIGHTBOX_ZOOM_STEP;
+    changeLightboxZoom(delta, lightboxAnchorFromEvent(event));
+  }
+
+  function lightboxDownloadName(item, index) {
+    const srcPath = (item.src || "").split("?")[0];
+    const extension = (srcPath.split(".").pop() || "jpg").replace(/[^a-zA-Z0-9]/g, "").slice(0, 5) || "jpg";
+    const caption = (item.caption || item.alt || "seoi-kidsnote")
+      .replace(/^_\\d+\\s*/, "")
+      .replace(/[\\\\/:*?"<>|]+/g, " ")
+      .replace(/\\s+/g, " ")
+      .trim()
+      .slice(0, 60) || "seoi-kidsnote";
+    return `${caption}-${String(index + 1).padStart(2, "0")}.${extension}`;
+  }
+
+  async function downloadLightboxImage() {
+    const item = state.lightboxItems[state.lightboxIndex];
+    if (!item?.src || lightbox.hidden) return;
+    lightboxDownload.disabled = true;
+    try {
+      const response = await fetch(item.src);
+      if (!response.ok) throw new Error("download failed");
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = lightboxDownloadName(item, state.lightboxIndex);
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    } catch {
+      const link = document.createElement("a");
+      link.href = item.src;
+      link.download = lightboxDownloadName(item, state.lightboxIndex);
+      link.target = "_blank";
+      document.body.append(link);
+      link.click();
+      link.remove();
+    } finally {
+      lightboxDownload.disabled = false;
+    }
+  }
+
   function showLightbox(index) {
     const item = state.lightboxItems[index];
     if (!item) return;
     state.lightboxIndex = index;
+    state.lightboxZoom = LIGHTBOX_MIN_ZOOM;
+    lightboxImage.removeAttribute("style");
     lightboxImage.src = item.src;
     lightboxImage.alt = item.alt;
     lightboxCaption.textContent = `${index + 1} / ${state.lightboxItems.length} · ${item.caption}`;
     lightbox.hidden = false;
+    window.requestAnimationFrame(resetLightboxZoom);
   }
 
   function closeLightbox() {
     lightbox.hidden = true;
+    state.lightboxZoom = LIGHTBOX_MIN_ZOOM;
+    state.lightboxDrag = null;
+    lightboxImageWrap.classList.remove("is-zoomed");
+    lightboxImageWrap.classList.remove("is-dragging");
+    lightboxImage.removeAttribute("style");
     lightboxImage.removeAttribute("src");
   }
 
@@ -1842,6 +2188,7 @@ APP_JS = """(() => {
       const manifest = await response.json();
       state.allPosts = manifest.posts || [];
       state.counts = manifest.counts || state.counts;
+      state.newCounts = countNewPosts(state.allPosts);
       renderSyncMeta(manifest.exported_at);
       renderMonthOptions();
       refreshView();
@@ -1914,12 +2261,45 @@ APP_JS = """(() => {
     if (event.target === lightbox || event.target.closest(".lightbox-close")) closeLightbox();
     if (event.target.closest(".lightbox-prev")) moveLightbox(-1);
     if (event.target.closest(".lightbox-next")) moveLightbox(1);
+    if (event.target.closest(".lightbox-zoom-out")) changeLightboxZoom(-LIGHTBOX_ZOOM_STEP);
+    if (event.target.closest(".lightbox-zoom-in")) changeLightboxZoom(LIGHTBOX_ZOOM_STEP);
+    if (event.target.closest(".lightbox-zoom-reset")) resetLightboxZoom();
+    if (event.target.closest(".lightbox-download")) downloadLightboxImage();
+  });
+
+  lightboxImage.addEventListener("load", resetLightboxZoom);
+  lightboxImage.addEventListener("dblclick", (event) => {
+    toggleLightboxZoom(lightboxAnchorFromEvent(event));
+  });
+  lightboxImageWrap.addEventListener("wheel", handleLightboxWheel, { passive: false });
+  lightboxImageWrap.addEventListener("pointerdown", startLightboxDrag);
+  lightboxImageWrap.addEventListener("pointermove", moveLightboxDrag);
+  lightboxImageWrap.addEventListener("pointerup", endLightboxDrag);
+  lightboxImageWrap.addEventListener("pointercancel", endLightboxDrag);
+  lightboxImageWrap.addEventListener("lostpointercapture", () => {
+    state.lightboxDrag = null;
+    lightboxImageWrap.classList.remove("is-dragging");
+  });
+  window.addEventListener("resize", () => {
+    if (!lightbox.hidden) renderLightboxZoom();
   });
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") closeLightbox();
     if (event.key === "ArrowLeft") moveLightbox(-1);
     if (event.key === "ArrowRight") moveLightbox(1);
+    if (!lightbox.hidden && (event.key === "+" || event.key === "=")) {
+      event.preventDefault();
+      changeLightboxZoom(LIGHTBOX_ZOOM_STEP);
+    }
+    if (!lightbox.hidden && event.key === "-") {
+      event.preventDefault();
+      changeLightboxZoom(-LIGHTBOX_ZOOM_STEP);
+    }
+    if (event.key === "0" && !lightbox.hidden) {
+      event.preventDefault();
+      resetLightboxZoom();
+    }
   });
 
   passcodeForm.addEventListener("submit", handlePasscodeSubmit);
