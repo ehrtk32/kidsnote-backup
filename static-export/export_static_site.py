@@ -472,10 +472,10 @@ def hashed_asset_name(prefix: str, extension: str, content: str) -> str:
     return f"{prefix}.{digest}.{extension}"
 
 
-def write_static_assets(out_dir: Path) -> None:
+def write_static_assets(out_dir: Path) -> str:
     assets_dir = out_dir / "assets"
     assets_dir.mkdir(parents=True, exist_ok=True)
-    for pattern in ("styles*.css", "app*.js"):
+    for pattern in ("styles*.css", "app*.js", "*.svg", "*.jpg", "*.jpeg", "*.png", "*.webp"):
         for path in assets_dir.glob(pattern):
             path.unlink()
 
@@ -489,11 +489,20 @@ def write_static_assets(out_dir: Path) -> None:
     write_text(out_dir / "index.html", index_html)
     write_text(assets_dir / styles_name, STYLES_CSS)
     write_text(assets_dir / app_name, APP_JS)
+    for source in (Path(__file__).resolve().parent / "assets").iterdir():
+        if source.is_file():
+            shutil.copy2(source, assets_dir / source.name)
     write_text(out_dir / "_headers", HEADERS)
+    return index_html
+
+
+def write_post_routes(out_dir: Path, posts: list[dict[str, Any]], index_html: str) -> None:
+    for post in posts:
+        write_text(out_dir / f"posts/{post['id']}/index.html", index_html)
 
 
 def clean_generated_data(out_dir: Path) -> None:
-    for path in (out_dir / "data/posts",):
+    for path in (out_dir / "data/posts", out_dir / "posts"):
         if path.exists():
             shutil.rmtree(path)
     for path in (out_dir / "data/posts.json", out_dir / "export-report.json"):
@@ -551,7 +560,7 @@ def main() -> int:
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     clean_generated_data(out_dir)
-    write_static_assets(out_dir)
+    index_html = write_static_assets(out_dir)
 
     notion = NotionClient(
         token=require_value(env_file_values, "NOTION_TOKEN"),
@@ -593,6 +602,7 @@ def main() -> int:
         "posts": posts,
     }
     write_text(out_dir / "data/posts.json", json.dumps(manifest, ensure_ascii=False, separators=(",", ":")))
+    write_post_routes(out_dir, posts, index_html)
 
     pruned_media_count = prune_unused_media(out_dir, renderer.used_media_paths)
     stats = file_stats(out_dir)
@@ -633,20 +643,39 @@ INDEX_HTML = """<!doctype html>
   </section>
 
   <div class="app-shell" id="appShell" aria-hidden="true">
-    <header class="topbar">
-      <div class="topbar-inner">
-        <div class="brand">
-          <div class="brand-mark" aria-hidden="true">♥</div>
-          <h1 class="brand-title">서이의 키즈노트</h1>
+    <aside class="sidebar">
+      <header class="sidebar-header">
+        <div class="sidebar-brand" aria-label="서이의 키즈노트">
+          <span class="sidebar-brand-mark" aria-hidden="true">♥</span>
+          <span class="sidebar-brand-copy">
+            <strong><span>서이</span>의 키즈노트</strong>
+            <small>Seoi's Kidsnote</small>
+          </span>
         </div>
-        <div class="topbar-actions">
-          <div class="sync-meta" id="syncMeta">동기화 확인 중</div>
-          <button class="filter-toggle-button" id="filterToggle" type="button" aria-expanded="false" aria-controls="filterTools">필터 목록 열기</button>
+      </header>
+      <section class="profile" aria-label="서이 프로필">
+        <button class="profile-photo" id="profilePhoto" type="button" aria-label="서이 사진 크게 보기">
+          <img src="/assets/seoi-profile.jpg" alt="서이">
+        </button>
+        <div class="profile-copy">
+          <h1>서이</h1>
+          <p><time datetime="2025-03-04">2025.03.04</time><span aria-hidden="true">·</span><strong id="babyDays">D+</strong></p>
         </div>
-      </div>
-    </header>
+      </section>
+      <nav class="tabs" id="tabs" aria-label="서이의 키즈노트 메뉴"></nav>
+      <footer class="sidebar-footer">
+        <div class="sync-meta" id="syncMeta">동기화 확인 중</div>
+      </footer>
+    </aside>
 
     <main class="workspace">
+      <header class="content-header">
+        <div>
+          <p class="content-eyebrow" id="pageEyebrow">서이의 새로운 기록</p>
+          <h2 class="content-title" id="pageTitle">홈</h2>
+        </div>
+        <button class="filter-toggle-button" id="filterToggle" type="button" aria-expanded="false" aria-controls="filterTools">필터 목록 열기</button>
+      </header>
       <section class="tools" id="filterTools" aria-label="검색과 필터" hidden>
         <label class="search-box">
           <span class="search-icon" aria-hidden="true">⌕</span>
@@ -657,7 +686,6 @@ INDEX_HTML = """<!doctype html>
         </select>
         <button class="clear-button" id="clearFilters" type="button">초기화</button>
       </section>
-      <nav class="tabs" id="tabs" aria-label="Kidsnote categories"></nav>
       <section class="dashboard-grid">
         <aside class="list-panel">
           <button class="panel-head panel-toggle" id="listToggle" type="button" aria-expanded="true" aria-controls="entryList">
@@ -669,7 +697,7 @@ INDEX_HTML = """<!doctype html>
           </button>
           <div class="entry-list" id="entryList"></div>
         </aside>
-        <article class="detail-panel">
+        <article class="detail-panel" id="detailPanel" hidden>
           <div class="detail-body" id="detail">
             <div class="empty">선택된 항목이 없습니다.</div>
           </div>
@@ -746,6 +774,8 @@ select {
 
 .app-shell {
   min-height: 100vh;
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr);
 }
 
 .locked .app-shell {
@@ -833,62 +863,150 @@ body:not(.locked) .passcode-screen {
   font-size: 14px;
 }
 
-.topbar {
-  border-bottom: 1px solid var(--line);
-  background: rgba(255, 255, 255, .92);
-  backdrop-filter: blur(12px);
+.sidebar {
   position: sticky;
   top: 0;
-  z-index: 10;
+  height: 100vh;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--line);
+  background: var(--surface);
+  z-index: 20;
 }
 
-.topbar-inner {
-  width: min(1220px, calc(100% - 32px));
-  margin: 0 auto;
-  min-height: 68px;
+.sidebar-header {
+  min-height: 72px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
 }
 
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-}
-
-.brand-mark {
-  width: 36px;
-  height: 36px;
-  border-radius: 8px;
-  background: var(--accent);
+.profile {
+  min-height: 226px;
+  padding: 28px 24px 24px;
+  border-bottom: 1px solid var(--line);
   display: grid;
   place-items: center;
-  color: #fff;
-  font-size: 17px;
-  font-weight: 800;
-  line-height: 1;
+  align-content: center;
+  gap: 14px;
+  text-align: center;
 }
 
-.brand-title {
+.profile-photo {
+  width: 88px;
+  height: 88px;
+  padding: 0;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  background: var(--surface-soft);
+  box-shadow: 0 0 0 1px var(--line), 0 10px 24px rgba(32, 35, 31, .14);
+  overflow: hidden;
+  cursor: zoom-in;
+  transition: box-shadow .18s ease, transform .18s ease;
+}
+
+.profile-photo:hover {
+  box-shadow: 0 0 0 2px rgba(40, 112, 93, .24), 0 12px 26px rgba(32, 35, 31, .16);
+  transform: translateY(-1px);
+}
+
+.profile-photo:focus-visible {
+  outline: 3px solid rgba(40, 112, 93, .3);
+  outline-offset: 3px;
+}
+
+.profile-photo img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  object-position: 35% 42%;
+  transform: scale(2.35);
+  transform-origin: 35% 42%;
+}
+
+.profile-copy h1 {
   margin: 0;
   font-size: 20px;
+  line-height: 1.3;
+}
+
+.profile-copy p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.profile-copy p span {
+  margin: 0 6px;
+  color: var(--line);
+}
+
+.profile-copy strong {
+  color: var(--accent);
   font-weight: 760;
-  letter-spacing: 0;
+}
+
+.sidebar-footer {
+  margin-top: auto;
+  padding: 18px 20px 22px;
+  border-top: 1px solid var(--line);
+}
+
+.sidebar-brand {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  color: var(--ink);
+}
+
+.sidebar-brand-mark {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow: 0 6px 14px rgba(40, 112, 93, .2);
+}
+
+.sidebar-brand-copy {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.sidebar-brand-copy strong {
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.sidebar-brand-copy strong span {
+  color: var(--accent);
+}
+
+.sidebar-brand-copy small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.3;
 }
 
 .sync-meta {
   color: var(--muted);
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-.topbar-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .filter-toggle-button {
@@ -908,8 +1026,31 @@ body:not(.locked) .passcode-screen {
 }
 
 .workspace {
-  width: min(1220px, calc(100% - 32px));
-  margin: 22px auto 40px;
+  width: min(100%, 1120px);
+  margin: 0 auto;
+  padding: 34px 40px 56px;
+}
+
+.content-header {
+  min-height: 64px;
+  margin-bottom: 18px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.content-eyebrow {
+  margin: 0 0 3px;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 720;
+}
+
+.content-title {
+  margin: 0;
+  font-size: 26px;
+  line-height: 1.25;
 }
 
 .tools {
@@ -973,62 +1114,124 @@ body:not(.locked) .passcode-screen {
 }
 
 .tabs {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-bottom: 16px;
-  padding-top: 8px;
-  padding-right: 8px;
+  display: grid;
+  gap: 4px;
+  padding: 20px 14px;
 }
 
 .tab {
   position: relative;
-  border: 1px solid var(--line);
-  background: var(--surface);
+  width: 100%;
+  min-height: 48px;
+  border: 0;
+  background: transparent;
   color: var(--muted);
-  border-radius: 8px;
-  padding: 9px 13px;
-  min-height: 42px;
-  display: inline-flex;
+  text-decoration: none;
+  border-radius: 7px;
+  padding: 8px 10px;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
   align-items: center;
+  gap: 10px;
+  text-align: left;
+  cursor: pointer;
 }
 
-.tab[aria-selected="true"] {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+.tab:hover {
+  background: var(--surface-soft);
+  color: var(--ink);
+}
+
+.tab:focus-visible {
+  outline: 3px solid var(--accent-soft);
+}
+
+.tab[aria-selected="true"],
+.tab[aria-current="page"] {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
   font-weight: 720;
 }
 
+.tab-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  background: #e8f1fb;
+  color: var(--notice);
+  font-size: 17px;
+  line-height: 1;
+}
+
+.tab-icon img {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+.tab[data-type="home"] .tab-icon,
+.tab[href*="type=home"] .tab-icon {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.tab[data-type="album"] .tab-icon,
+.tab[href*="type=album"] .tab-icon {
+  background: #fff0e6;
+  color: var(--album);
+}
+
+.tab[data-type="announcement"] .tab-icon,
+.tab[href*="type=announcement"] .tab-icon {
+  background: #fdebea;
+  color: #b84b46;
+}
+
+.tab-label {
+  min-width: 0;
+}
+
+.tab-meta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
 .tab-count {
-  margin-left: 6px;
-  opacity: .82;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
 }
 
 .tab-new-count {
-  position: absolute;
-  top: -9px;
-  right: -9px;
   display: grid;
   place-items: center;
-  min-width: 22px;
-  height: 22px;
+  min-width: 21px;
+  height: 21px;
   padding: 0 6px;
-  border: 2px solid #fff;
+  border: 0;
   border-radius: 999px;
   background: #d9342b;
   color: #fff;
   font-size: 12px;
   font-weight: 820;
   line-height: 1;
-  box-shadow: 0 2px 6px rgba(20, 24, 22, .2);
+  box-shadow: none;
 }
 
 .dashboard-grid {
   display: grid;
-  grid-template-columns: minmax(320px, 400px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 900px);
+  justify-content: start;
   gap: 18px;
   align-items: start;
+}
+
+.app-shell.is-detail-route .dashboard-grid {
+  grid-template-columns: minmax(0, 960px);
 }
 
 .list-panel,
@@ -1097,8 +1300,6 @@ body:not(.locked) .passcode-screen {
 
 .entry-list {
   display: grid;
-  max-height: calc(100vh - 196px);
-  overflow: auto;
 }
 
 .entry-list[hidden] {
@@ -1116,11 +1317,17 @@ body:not(.locked) .passcode-screen {
   gap: 12px;
   padding: 13px 14px;
   text-align: left;
+  text-decoration: none;
+  cursor: pointer;
 }
 
-.entry:hover,
-.entry[aria-current="true"] {
+.entry:hover {
   background: var(--accent-soft);
+}
+
+.entry:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: -3px;
 }
 
 .entry-thumb {
@@ -1198,6 +1405,31 @@ body:not(.locked) .passcode-screen {
 
 .detail-body {
   padding: 20px;
+}
+
+.detail-back {
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  margin-bottom: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 12px;
+  background: var(--surface);
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 720;
+}
+
+.detail-back:hover {
+  border-color: var(--accent);
+  background: var(--surface-soft);
+}
+
+.detail-back:focus-visible {
+  outline: 3px solid var(--accent-soft);
+  border-color: var(--accent);
 }
 
 .detail-title {
@@ -1288,9 +1520,10 @@ body:not(.locked) .passcode-screen {
   text-align: left;
   display: grid;
   gap: 4px;
+  text-decoration: none;
 }
 
-.post-nav-button:not(:disabled):hover {
+.post-nav-button:not(.is-disabled):hover {
   border-color: var(--accent);
   background: var(--surface-soft);
 }
@@ -1300,7 +1533,7 @@ body:not(.locked) .passcode-screen {
   border-color: var(--accent);
 }
 
-.post-nav-button:disabled {
+.post-nav-button.is-disabled {
   color: var(--muted);
   opacity: .55;
 }
@@ -1521,36 +1754,111 @@ body:not(.locked) .passcode-screen {
 }
 
 @media (max-width: 860px) {
-  .topbar-inner,
+  .app-shell {
+    display: block;
+  }
+
+  .sidebar {
+    position: static;
+    height: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    box-shadow: 0 6px 20px rgba(25, 32, 28, .06);
+  }
+
+  .profile {
+    min-height: 78px;
+    padding: 10px 16px 8px;
+    border-bottom: 0;
+    display: flex;
+    justify-content: flex-start;
+    gap: 12px;
+    text-align: left;
+  }
+
+  .sidebar-header {
+    min-height: 64px;
+    padding: 12px 16px;
+  }
+
+  .profile-photo {
+    width: 54px;
+    height: 54px;
+    border-width: 2px;
+    flex: 0 0 auto;
+  }
+
+  .profile-copy h1 {
+    font-size: 17px;
+  }
+
+  .profile-copy p {
+    margin-top: 2px;
+    font-size: 12px;
+  }
+
+  .sidebar-footer {
+    display: none;
+  }
+
+  .tabs {
+    grid-template-columns: repeat(4, minmax(76px, 1fr));
+    gap: 4px;
+    padding: 0 10px 10px;
+    overflow-x: auto;
+  }
+
+  .tab {
+    min-height: 42px;
+    grid-template-columns: 24px minmax(0, 1fr);
+    gap: 6px;
+    padding: 6px 8px;
+  }
+
+  .tab-icon {
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    font-size: 14px;
+  }
+
+  .tab-count {
+    display: none;
+  }
+
+  .tab-new-count {
+    position: absolute;
+    top: -3px;
+    right: -2px;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border: 2px solid #fff;
+    font-size: 10px;
+  }
+
   .workspace {
-    width: min(100% - 24px, 1220px);
-  }
-
-  .topbar-inner {
-    align-items: flex-start;
-    flex-direction: column;
-    justify-content: center;
-    padding: 10px 0;
-  }
-
-  .topbar-actions {
     width: 100%;
-    justify-content: space-between;
+    padding: 20px 12px 40px;
+  }
+
+  .content-header {
+    min-height: 52px;
+    margin-bottom: 14px;
+    align-items: center;
+  }
+
+  .content-title {
+    font-size: 22px;
+  }
+
+  .content-eyebrow {
+    font-size: 12px;
   }
 
   .tools,
   .dashboard-grid {
     grid-template-columns: 1fr;
-  }
-
-  .entry-list {
-    max-height: min(42vh, 360px);
-    overflow: auto;
-    overscroll-behavior: contain;
-  }
-
-  .detail-panel {
-    scroll-margin-top: 92px;
   }
 
   .detail-title {
@@ -1577,6 +1885,35 @@ body:not(.locked) .passcode-screen {
     padding: 0 10px;
   }
 }
+
+@media (max-width: 430px) {
+  .tab {
+    justify-items: center;
+    grid-template-columns: 1fr;
+    gap: 2px;
+    padding: 6px 4px;
+    font-size: 12px;
+    text-align: center;
+  }
+
+  .tab-icon {
+    display: grid;
+  }
+
+  .tab-meta {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+
+  .content-header {
+    align-items: flex-end;
+  }
+
+  .filter-toggle-button {
+    padding: 0 10px;
+  }
+}
 """
 
 
@@ -1585,16 +1922,27 @@ APP_JS = """(() => {
   const UNLOCK_KEY = "seoiKidsnoteUnlocked";
 
   const tabs = [
-    { key: "daily", label: "알림장" },
-    { key: "album", label: "앨범" },
-    { key: "announcement", label: "공지" },
+    { key: "home", label: "홈", icon: "/assets/home.svg" },
+    { key: "daily", label: "알림장", icon: "/assets/daily.svg" },
+    { key: "album", label: "앨범", icon: "/assets/album.svg" },
+    { key: "announcement", label: "공지", icon: "/assets/announcement.svg" },
   ];
   const LIGHTBOX_MIN_ZOOM = 1;
   const LIGHTBOX_MAX_ZOOM = 4;
   const LIGHTBOX_ZOOM_STEP = 0.5;
+  const PROFILE_IMAGE_SRC = "/assets/seoi-profile.jpg";
+
+  function postIdFromPath(pathname) {
+    const match = String(pathname || "").match(/^\/posts\/(\d+)\/?$/);
+    return match ? Number(match[1]) : null;
+  }
+
+  function postPath(id) {
+    return `/posts/${Number(id)}/`;
+  }
 
   const state = {
-    activeType: window.localStorage.getItem("kidsnote.activeType") || "daily",
+    activeType: window.localStorage.getItem("kidsnote.activeType") || "home",
     activeMonth: window.localStorage.getItem("kidsnote.activeMonth") || "",
     query: "",
     allPosts: [],
@@ -1602,10 +1950,12 @@ APP_JS = """(() => {
     counts: { daily: 0, album: 0, announcement: 0 },
     newCounts: { daily: 0, album: 0, announcement: 0 },
     recentDateKeys: recentDateKeys(),
-    selectedId: null,
+    selectedId: postIdFromPath(window.location.pathname),
+    detailPosts: [],
     listCollapsed: false,
     filtersOpen: false,
     lightboxItems: [],
+    detailLightboxItems: [],
     lightboxIndex: 0,
     lightboxZoom: 1,
     lightboxDrag: null,
@@ -1614,6 +1964,7 @@ APP_JS = """(() => {
   const tabsNode = document.getElementById("tabs");
   const entryList = document.getElementById("entryList");
   const detail = document.getElementById("detail");
+  const detailPanel = document.getElementById("detailPanel");
   const listTitle = document.getElementById("listTitle");
   const listCount = document.getElementById("listCount");
   const listPanel = document.querySelector(".list-panel");
@@ -1633,7 +1984,13 @@ APP_JS = """(() => {
   const lightboxZoomOut = document.querySelector(".lightbox-zoom-out");
   const lightboxZoomIn = document.querySelector(".lightbox-zoom-in");
   const lightboxDownload = document.querySelector(".lightbox-download");
+  const lightboxPrev = document.querySelector(".lightbox-prev");
+  const lightboxNext = document.querySelector(".lightbox-next");
   const appShell = document.getElementById("appShell");
+  const profilePhoto = document.getElementById("profilePhoto");
+  const babyDays = document.getElementById("babyDays");
+  const pageEyebrow = document.getElementById("pageEyebrow");
+  const pageTitle = document.getElementById("pageTitle");
   const passcodeForm = document.getElementById("passcodeForm");
   const passcodeInput = document.getElementById("passcodeInput");
   const passcodeMessage = document.getElementById("passcodeMessage");
@@ -1645,7 +2002,8 @@ APP_JS = """(() => {
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
 
-  const activeLabel = () => tabs.find((tab) => tab.key === state.activeType)?.label || "알림장";
+  const activeLabel = () => tabs.find((tab) => tab.key === state.activeType)?.label || "홈";
+  const activeListLabel = () => state.activeType === "home" ? "최신 업데이트" : activeLabel();
 
   function normalize(value) {
     return String(value || "").toLocaleLowerCase("ko-KR");
@@ -1672,6 +2030,22 @@ APP_JS = """(() => {
     const now = new Date();
     const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
     return new Set([koreaDateKey(now), koreaDateKey(yesterday)]);
+  }
+
+  function renderBabyDays() {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Seoul",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(new Date()).reduce((acc, part) => {
+      acc[part.type] = Number(part.value);
+      return acc;
+    }, {});
+    const today = Date.UTC(parts.year, parts.month - 1, parts.day);
+    const birthday = Date.UTC(2025, 2, 4);
+    const days = Math.floor((today - birthday) / 86400000) + 1;
+    babyDays.textContent = `D+${Math.max(1, days)}`;
   }
 
   function isNewPost(post) {
@@ -1747,9 +2121,35 @@ APP_JS = """(() => {
   }
 
   function renderFilterPanelState() {
-    filterTools.hidden = !state.filtersOpen;
+    const detailRoute = state.selectedId !== null;
+    filterTools.hidden = detailRoute || !state.filtersOpen;
+    filterToggle.hidden = detailRoute;
     filterToggle.textContent = state.filtersOpen ? "필터 목록 닫기" : "필터 목록 열기";
     filterToggle.setAttribute("aria-expanded", String(state.filtersOpen));
+  }
+
+  function renderRouteState() {
+    const detailRoute = state.selectedId !== null;
+    appShell.classList.toggle("is-detail-route", detailRoute);
+    tabsNode.hidden = false;
+    listPanel.hidden = detailRoute;
+    detailPanel.hidden = !detailRoute;
+    renderFilterPanelState();
+  }
+
+  function renderPageHeader() {
+    if (state.selectedId !== null) {
+      pageEyebrow.textContent = "서이의 기록";
+      pageTitle.textContent = activeLabel();
+      return;
+    }
+    if (state.activeType === "home") {
+      pageEyebrow.textContent = "오늘과 어제의 새 소식";
+      pageTitle.textContent = "홈";
+      return;
+    }
+    pageEyebrow.textContent = "서이의 기록 모아보기";
+    pageTitle.textContent = activeLabel();
   }
 
   function toggleFilters() {
@@ -1769,26 +2169,41 @@ APP_JS = """(() => {
   }
 
   function renderTabs() {
-    tabsNode.innerHTML = tabs.map((tab) => (
-      `<button class="tab" type="button" data-type="${tab.key}" aria-selected="${tab.key === state.activeType ? "true" : "false"}">`
-      + `${tab.label}<span class="tab-count">${state.counts[tab.key] || 0}</span>`
-      + `${state.newCounts[tab.key] ? `<span class="tab-new-count" aria-label="오늘 업데이트 ${state.newCounts[tab.key]}개">${state.newCounts[tab.key]}</span>` : ""}</button>`
-    )).join("");
+    const detailRoute = state.selectedId !== null;
+    tabsNode.innerHTML = tabs.map((tab) => {
+      const count = tab.key === "home"
+        ? Object.values(state.newCounts).reduce((total, value) => total + value, 0)
+        : state.counts[tab.key] || 0;
+      const newCount = tab.key === "home" ? 0 : state.newCounts[tab.key] || 0;
+      const content = (
+        `<span class="tab-icon" aria-hidden="true"><img src="${tab.icon}" alt=""></span>`
+        + `<span class="tab-label">${tab.label}</span>`
+        + `<span class="tab-meta"><span class="tab-count">${count}</span>`
+        + `${newCount ? `<span class="tab-new-count" aria-label="최근 업데이트 ${newCount}개">${newCount}</span>` : ""}</span>`
+      );
+      if (detailRoute) {
+        const current = tab.key === state.activeType ? ' aria-current="page"' : "";
+        return `<a class="tab" href="/?type=${tab.key}"${current}>${content}</a>`;
+      }
+      return (
+        `<button class="tab" type="button" data-type="${tab.key}" aria-selected="${tab.key === state.activeType ? "true" : "false"}">`
+        + `${content}</button>`
+      );
+    }).join("");
   }
 
-  function applyFilters(keepSelection = false) {
+  function applyFilters() {
     const query = normalize(state.query).trim();
     state.posts = state.allPosts.filter((post) => {
-      if (post.type !== state.activeType) return false;
+      if (state.activeType === "home") {
+        if (!isNewPost(post)) return false;
+      } else if (post.type !== state.activeType) {
+        return false;
+      }
       if (state.activeMonth && monthKey(post) !== state.activeMonth) return false;
       if (!query) return true;
       return normalize([displayTitle(post.title), post.date, post.summary, post.type_label].join(" ")).includes(query);
     });
-
-    if (keepSelection && state.posts.some((post) => post.id === state.selectedId)) {
-      return;
-    }
-    state.selectedId = state.posts[0]?.id || null;
   }
 
   function renderListCollapseState() {
@@ -1805,31 +2220,31 @@ APP_JS = """(() => {
   }
 
   function renderList() {
-    listTitle.textContent = activeLabel();
+    listTitle.textContent = activeListLabel();
     const filters = [state.activeMonth, state.query.trim()].filter(Boolean).length;
     listCount.textContent = filters ? `${state.posts.length}개 필터됨` : `${state.posts.length}개`;
     renderListCollapseState();
 
     if (!state.posts.length) {
-      entryList.innerHTML = '<div class="empty">조건에 맞는 항목이 없습니다.</div>';
-      detail.innerHTML = '<div class="empty">선택된 항목이 없습니다.</div>';
+      entryList.innerHTML = state.activeType === "home"
+        ? '<div class="empty">최근 등록된 새로운 기록이 없습니다.</div>'
+        : '<div class="empty">조건에 맞는 항목이 없습니다.</div>';
       return;
     }
 
     entryList.innerHTML = state.posts.map((post) => {
-      const selected = post.id === state.selectedId ? "true" : "false";
       const thumb = post.thumbnail_url ? ` style="background-image: url('${escapeHtml(post.thumbnail_url)}')"` : "";
       const fallback = post.thumbnail_url ? "" : escapeHtml(post.type_label);
       const title = displayTitle(post.title);
       const newMarker = isNewPost(post) ? '<span class="new-pill">NEW</span>' : "";
       return (
-        `<button class="entry" type="button" data-id="${post.id}" aria-current="${selected}">`
+        `<a class="entry" href="${postPath(post.id)}">`
         + `<span class="entry-thumb"${thumb}>${fallback}</span>`
         + "<span>"
         + `<span class="entry-kicker"><span class="badge ${post.type}">${escapeHtml(post.type_label)}</span><span>${escapeHtml(post.date)}</span>${newMarker}</span>`
         + `<span class="entry-title">${escapeHtml(title)}</span>`
         + `<span class="entry-summary">${escapeHtml(post.summary)}</span>`
-        + "</span></button>"
+        + "</span></a>"
       );
     }).join("");
   }
@@ -1864,7 +2279,7 @@ APP_JS = """(() => {
     });
 
     if (!items.length) return;
-    state.lightboxItems = items;
+    state.detailLightboxItems = items;
     if (post.type !== "album") return;
 
     const gallery = document.createElement("div");
@@ -1909,30 +2324,30 @@ APP_JS = """(() => {
   }
 
   function adjacentPost(offset) {
-    const index = state.posts.findIndex((post) => post.id === state.selectedId);
+    const index = state.detailPosts.findIndex((post) => post.id === state.selectedId);
     if (index < 0) return null;
-    return state.posts[index + offset] || null;
+    return state.detailPosts[index + offset] || null;
   }
 
   function renderPostNav() {
-    if (state.posts.length < 2) return "";
+    if (state.detailPosts.length < 2) return "";
     const previousPost = adjacentPost(1);
     const nextPost = adjacentPost(-1);
 
     const button = (post, direction, label) => {
       if (!post) {
         return (
-          `<button class="post-nav-button ${direction}" type="button" disabled>`
+          `<span class="post-nav-button ${direction} is-disabled" aria-disabled="true">`
           + `<span class="post-nav-label">${label}</span>`
           + '<span class="post-nav-title">없음</span>'
-          + '</button>'
+          + '</span>'
         );
       }
       return (
-        `<button class="post-nav-button ${direction}" type="button" data-nav-id="${post.id}">`
+        `<a class="post-nav-button ${direction}" href="${postPath(post.id)}">`
         + `<span class="post-nav-label">${label}</span>`
         + `<span class="post-nav-title">${escapeHtml(displayTitle(post.title))}</span>`
-        + '</button>'
+        + '</a>'
       );
     };
 
@@ -1946,7 +2361,6 @@ APP_JS = """(() => {
 
   async function loadDetail(id) {
     state.selectedId = Number(id);
-    renderList();
     detail.innerHTML = '<div class="empty">불러오는 중</div>';
 
     try {
@@ -1955,12 +2369,15 @@ APP_JS = """(() => {
       const post = await response.json();
       const title = displayTitle(post.title);
       const newMarker = isNewPost(post) ? '<span class="new-pill">NEW</span>' : "";
+      const backPath = `/?type=${encodeURIComponent(post.type)}`;
       detail.innerHTML = (
-        `<h2 class="detail-title">${escapeHtml(title)}</h2>`
+        `<a class="detail-back" href="${backPath}">‹ ${escapeHtml(post.type_label)} 목록으로</a>`
+        + `<h2 class="detail-title">${escapeHtml(title)}</h2>`
         + `<div class="detail-meta"><span class="badge ${post.type}">${escapeHtml(post.type_label)}</span><span>${escapeHtml(post.date)}</span>${newMarker}</div>`
         + `<div class="detail-content">${post.content || ""}</div>`
         + renderPostNav()
       );
+      document.title = `${title} | 서이의 키즈노트`;
       cleanDetailContent(detail.querySelector(".detail-content"));
       state.lightboxItems = [];
       enhanceMediaLightbox(post);
@@ -1969,13 +2386,11 @@ APP_JS = """(() => {
     }
   }
 
-  function refreshView(keepSelection = false) {
-    applyFilters(keepSelection);
+  function refreshView() {
+    applyFilters();
     renderTabs();
+    renderPageHeader();
     renderList();
-    if (state.selectedId) {
-      loadDetail(state.selectedId);
-    }
   }
 
   function clampZoom(value) {
@@ -2139,7 +2554,8 @@ APP_JS = """(() => {
     }
   }
 
-  function showLightbox(index) {
+  function showLightbox(index, items = null) {
+    if (items) state.lightboxItems = items;
     const item = state.lightboxItems[index];
     if (!item) return;
     state.lightboxIndex = index;
@@ -2148,6 +2564,8 @@ APP_JS = """(() => {
     lightboxImage.src = item.src;
     lightboxImage.alt = item.alt;
     lightboxCaption.textContent = `${index + 1} / ${state.lightboxItems.length} · ${item.caption}`;
+    lightboxPrev.hidden = state.lightboxItems.length < 2;
+    lightboxNext.hidden = state.lightboxItems.length < 2;
     lightbox.hidden = false;
     window.requestAnimationFrame(resetLightboxZoom);
   }
@@ -2168,19 +2586,20 @@ APP_JS = """(() => {
     showLightbox(next);
   }
 
-  function scrollDetailIntoViewOnMobile() {
-    if (!window.matchMedia("(max-width: 860px)").matches) return;
-    detail.closest(".detail-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }
-
-  function scrollDetailToTop() {
-    detail.closest(".detail-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }
-
   async function loadApp() {
+    renderBabyDays();
+    const requestedType = new URLSearchParams(window.location.search).get("type");
+    if (tabs.some((tab) => tab.key === requestedType)) {
+      state.activeType = requestedType;
+      window.localStorage.setItem("kidsnote.activeType", state.activeType);
+    }
+    renderRouteState();
     renderTabs();
-    renderFilterPanelState();
-    entryList.innerHTML = '<div class="empty">불러오는 중</div>';
+    if (state.selectedId === null) {
+      entryList.innerHTML = '<div class="empty">불러오는 중</div>';
+    } else {
+      detail.innerHTML = '<div class="empty">불러오는 중</div>';
+    }
 
     try {
       const response = await fetch("/data/posts.json");
@@ -2190,11 +2609,25 @@ APP_JS = """(() => {
       state.counts = manifest.counts || state.counts;
       state.newCounts = countNewPosts(state.allPosts);
       renderSyncMeta(manifest.exported_at);
-      renderMonthOptions();
-      refreshView();
+      if (state.selectedId !== null) {
+        const selectedPost = state.allPosts.find((post) => post.id === state.selectedId);
+        if (!selectedPost) throw new Error("post not found");
+        state.activeType = selectedPost.type;
+        state.detailPosts = state.allPosts.filter((post) => post.type === selectedPost.type);
+        renderTabs();
+        renderPageHeader();
+        await loadDetail(state.selectedId);
+      } else {
+        document.title = "서이의 키즈노트";
+        renderMonthOptions();
+        refreshView();
+      }
     } catch {
-      entryList.innerHTML = '<div class="error">목록을 불러오지 못했습니다.</div>';
-      detail.innerHTML = '<div class="error">상세 내용을 불러오지 못했습니다.</div>';
+      if (state.selectedId === null) {
+        entryList.innerHTML = '<div class="error">목록을 불러오지 못했습니다.</div>';
+      } else {
+        detail.innerHTML = '<a class="detail-back" href="/">‹ 목록으로</a><div class="error">상세 내용을 불러오지 못했습니다.</div>';
+      }
     }
   }
 
@@ -2209,17 +2642,9 @@ APP_JS = """(() => {
   listToggle.addEventListener("click", toggleList);
   filterToggle.addEventListener("click", toggleFilters);
 
-  entryList.addEventListener("click", (event) => {
-    const target = event.target.closest("button[data-id]");
-    if (target) {
-      loadDetail(target.dataset.id);
-      scrollDetailIntoViewOnMobile();
-    }
-  });
-
   searchInput.addEventListener("input", (event) => {
     state.query = event.target.value;
-    refreshView(true);
+    refreshView();
   });
 
   monthFilter.addEventListener("change", (event) => {
@@ -2238,15 +2663,8 @@ APP_JS = """(() => {
   });
 
   detail.addEventListener("click", (event) => {
-    const navTarget = event.target.closest("button[data-nav-id]");
-    if (navTarget) {
-      loadDetail(navTarget.dataset.navId);
-      scrollDetailToTop();
-      return;
-    }
-
     const target = event.target.closest("[data-gallery-index]");
-    if (target) showLightbox(Number(target.dataset.galleryIndex));
+    if (target) showLightbox(Number(target.dataset.galleryIndex), state.detailLightboxItems);
   });
 
   detail.addEventListener("keydown", (event) => {
@@ -2254,7 +2672,15 @@ APP_JS = """(() => {
     const target = event.target.closest("figure[data-gallery-index]");
     if (!target) return;
     event.preventDefault();
-    showLightbox(Number(target.dataset.galleryIndex));
+    showLightbox(Number(target.dataset.galleryIndex), state.detailLightboxItems);
+  });
+
+  profilePhoto.addEventListener("click", () => {
+    showLightbox(0, [{
+      src: PROFILE_IMAGE_SRC,
+      alt: "서이",
+      caption: "서이",
+    }]);
   });
 
   lightbox.addEventListener("click", (event) => {
