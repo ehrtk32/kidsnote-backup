@@ -707,7 +707,7 @@ INDEX_HTML = """<!doctype html>
   </div>
   <div class="lightbox" id="lightbox" hidden>
     <div class="lightbox-top-actions">
-      <button class="lightbox-download" type="button" aria-label="사진 다운로드">⤓</button>
+      <button class="lightbox-download" type="button" aria-label="사진 다운로드"><img src="/assets/download.svg" alt=""></button>
       <button class="lightbox-close" type="button" aria-label="닫기">&times;</button>
     </div>
     <div class="lightbox-toolbar" aria-label="사진 확대 컨트롤">
@@ -1705,8 +1705,14 @@ body:not(.locked) .passcode-screen {
 }
 
 .lightbox-download {
-  font-size: 22px;
-  font-weight: 760;
+  display: grid;
+  place-items: center;
+}
+
+.lightbox-download img {
+  width: 20px;
+  height: 20px;
+  display: block;
 }
 
 .lightbox-close {
@@ -1804,7 +1810,11 @@ body:not(.locked) .passcode-screen {
   .tabs {
     grid-template-columns: repeat(4, minmax(76px, 1fr));
     gap: 4px;
-    padding: 0 10px 10px;
+    /* overflow-x: auto forces the computed overflow-y to auto as well, so this
+       row clips vertically at its padding edge. .tab-new-count is pulled 3px
+       above the tab, so without padding-top the badge got sliced off. Keep
+       enough room for the badge plus its 2px ring. */
+    padding: 7px 10px 10px;
     overflow-x: auto;
   }
 
