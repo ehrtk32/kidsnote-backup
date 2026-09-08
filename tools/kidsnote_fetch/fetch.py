@@ -192,7 +192,6 @@ def _second_factor_state(sess: requests.Session, username: str) -> list[dict[str
     url = f"{KIDSNOTE_BASE}/api/v1/second-factors/{quote(username, safe='')}/"
     r = sess.get(url, timeout=30)
     if r.status_code == 404:
-        # Unknown username, or the account predates the 2FA feature.
         return []
     if r.status_code >= 400:
         _LOGGER.warning("Could not read 2FA state (HTTP %s) - continuing", r.status_code)
@@ -261,10 +260,19 @@ def _login_with_password(username: str, password: str) -> requests.Session:
                 "and refused a second session."
             )
         if r.status_code in (400, 401, 403):
+            hint = ""
+            if code == "invalid_password":
+                # Deliberately unhelpful on Kidsnote's side: an unknown
+                # username returns this same code, so the name of the error
+                # does not narrow it down to the password.
+                hint = (
+                    " Kidsnote returns this same code for an unknown username, "
+                    "so check KIDSNOTE_USERNAME as well as KIDSNOTE_PASSWORD."
+                )
             raise RuntimeError(
                 f"Kidsnote rejected the credentials (HTTP {r.status_code}"
-                f"{', code=' + code if code else ''}). Check "
-                f"KIDSNOTE_USERNAME / KIDSNOTE_PASSWORD. Response: {r.text[:200]}"
+                f"{', code=' + code if code else ''})."
+                f"{hint} Response: {r.text[:200]}"
             )
         raise RuntimeError(f"Login failed: HTTP {r.status_code} {r.text[:300]}")
 
