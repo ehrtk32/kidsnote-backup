@@ -77,16 +77,45 @@ jobs:
 
       # Piped through stdin rather than --body so the cookie never lands in a
       # command line or the process table.
+      #
+      # The token is trimmed before use: a stray newline from `echo` or a
+      # textarea rides along into the Authorization header and GitHub answers
+      # 401 Bad credentials, which reads identically to a revoked token.
       - name: Store refreshed cookie
         if: ${{ steps.refresh.outputs.refreshed == 'true' }}
         env:
-          GH_TOKEN: ${{ secrets.GH_SECRETS_PAT }}
+          RAW_TOKEN: ${{ secrets.GH_SECRETS_PAT }}
         run: |
           set -eu
-          if [ -z "${GH_TOKEN:-}" ]; then
+          if [ -z "${RAW_TOKEN:-}" ]; then
             echo "::error::Cookie was refreshed but GH_SECRETS_PAT is unset, so it cannot be saved."
             exit 1
           fi
+
+          GH_TOKEN="$(printf %s "${RAW_TOKEN}" | tr -d '[:space:]')"
+          export GH_TOKEN
+
+          # Shape only - never the value. Enough to tell a truncated paste or a
+          # fine-grained token from a classic one without leaking anything.
+          raw_len=${#RAW_TOKEN}
+          trimmed_len=${#GH_TOKEN}
+          echo "token: length ${trimmed_len} (raw ${raw_len}), prefix ${GH_TOKEN%%_*}_"
+          if [ "${raw_len}" -ne "${trimmed_len}" ]; then
+            echo "::warning::GH_SECRETS_PAT contained whitespace; trimmed before use."
+          fi
+
+          if ! who="$(gh api user -q .login 2>&1)"; then
+            echo "::error::GH_SECRETS_PAT does not authenticate: ${who}"
+            exit 1
+          fi
+          echo "authenticated as ${who}"
+
+          if ! gh api "repos/${GITHUB_REPOSITORY}/actions/secrets/public-key" \
+                 -q .key_id > /dev/null 2>&1; then
+            echo "::error::Token authenticates but cannot read this repo's secrets. A classic token needs the 'repo' scope; a fine-grained one needs Secrets: Read and write plus access to this repository."
+            exit 1
+          fi
+
           gh secret set KIDSNOTE_SESSION_COOKIE \
             --repo "${GITHUB_REPOSITORY}" \
             < "${RUNNER_TEMP}/kidsnote-session"
