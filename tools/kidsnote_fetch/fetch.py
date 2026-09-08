@@ -318,16 +318,28 @@ def _login_with_password(username: str, password: str) -> requests.Session:
             f"Body keys: {sorted(body.keys())}"
         )
 
-    # Prove the thing actually authenticates before handing it back, so a
-    # shape change here surfaces now instead of as a confusing 401 later.
-    if _session_is_live(sess) is False:
+    # Prove the thing actually authenticates before handing it back. Demand a
+    # definite True here rather than merely "not False": the tri-state probe
+    # answers None when Kidsnote is unreachable or 5xx-ing, and accepting that
+    # would let an unusable session be written into the repo secret, replacing
+    # a working one. A login that cannot be confirmed is not worth storing.
+    live = _session_is_live(sess)
+    if live is not True:
+        detail = (
+            "it does not authenticate against /api/v1/me/children/"
+            if live is False
+            else "the check was inconclusive (Kidsnote unreachable or erroring)"
+        )
         raise RuntimeError(
             f"Login succeeded and yielded a session value (from {source}, "
-            f"length {len(cookie)}), but it does not authenticate against "
-            f"/api/v1/me/children/. Cookies seen: "
+            f"length {len(cookie)}), but {detail}. Cookies seen: "
             f"{[(c.name, c.domain) for c in sess.cookies]} "
             f"Body keys: {sorted(body.keys())}"
         )
+    _LOGGER.info(
+        "Session verified against /api/v1/me/children/ (source=%s, length=%d)",
+        source, len(cookie),
+    )
 
     _LOGGER.info("Logged in as %s - fresh sessionid acquired", username)
     return sess
