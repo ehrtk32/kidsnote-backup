@@ -276,12 +276,23 @@ def _login_with_password(username: str, password: str) -> requests.Session:
             )
         raise RuntimeError(f"Login failed: HTTP {r.status_code} {r.text[:300]}")
 
-    # /web/login/ hands the session back in the JSON body as `session_id`
-    # rather than as a Set-Cookie header, so the cookie jar comes back empty
-    # and we have to plant the value ourselves for the rest of the run.
-    cookie = sess.cookies.get("sessionid", domain="www.kidsnote.com")
+    # Look the cookie up by name across the whole jar rather than filtering on
+    # domain: the server may scope it to `.kidsnote.com`, and an exact-domain
+    # lookup for `www.kidsnote.com` would miss it and send us down the
+    # body-fallback path for a cookie we already had.
+    jar = {c.name: c for c in sess.cookies}
+    _LOGGER.debug(
+        "Login response: cookies=%s body_keys=%s",
+        [(c.name, c.domain) for c in sess.cookies],
+        sorted(body.keys()),
+    )
+
+    cookie = jar["sessionid"].value if "sessionid" in jar else ""
+    source = "Set-Cookie"
     if not cookie:
+        # Some deployments return the session in the JSON body instead.
         cookie = body.get("session_id") or body.get("sessionid") or ""
+        source = "body"
         if cookie:
             sess.cookies.set(
                 "sessionid", cookie, domain="www.kidsnote.com", path="/"
@@ -289,16 +300,20 @@ def _login_with_password(username: str, password: str) -> requests.Session:
     if not cookie:
         raise RuntimeError(
             f"Login returned HTTP {r.status_code} but no session value, "
-            f"neither as a cookie nor in the body. Response keys: "
-            f"{sorted(body.keys())}"
+            f"neither as a cookie nor in the body. Cookies: "
+            f"{[(c.name, c.domain) for c in sess.cookies]} "
+            f"Body keys: {sorted(body.keys())}"
         )
 
     # Prove the thing actually authenticates before handing it back, so a
     # shape change here surfaces now instead of as a confusing 401 later.
     if _session_is_live(sess) is False:
         raise RuntimeError(
-            "Login succeeded and returned a session value, but it does not "
-            "authenticate against /api/v1/me/children/."
+            f"Login succeeded and yielded a session value (from {source}, "
+            f"length {len(cookie)}), but it does not authenticate against "
+            f"/api/v1/me/children/. Cookies seen: "
+            f"{[(c.name, c.domain) for c in sess.cookies]} "
+            f"Body keys: {sorted(body.keys())}"
         )
 
     _LOGGER.info("Logged in as %s - fresh sessionid acquired", username)
