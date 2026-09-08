@@ -1,0 +1,86 @@
+# Keep KIDSNOTE_SESSION_COOKIE alive.
+#
+# Kidsnote's sessionid is valid for 30 days from the login that minted it and
+# does not slide when the mirror uses it, so it dies on a predictable monthly
+# cadence. Before this workflow existed every mirror run after that point
+# failed until someone logged in by hand, copied the cookie out of Chrome and
+# pasted it into the repo secret.
+#
+# This runs daily but only *probes* the cookie; it logs in and rewrites the
+# secret on the one day a month the probe fails. Kidsnote tracks concurrent
+# sessions (`already_login`) and can flag an account as `blocked`, so logging
+# in every day would be both wasteful and risky.
+#
+# Required repository secrets:
+#   KIDSNOTE_USERNAME    Kidsnote login id
+#   KIDSNOTE_PASSWORD    Kidsnote password
+#   GH_SECRETS_PAT       PAT with repo scope. The built-in GITHUB_TOKEN cannot
+#                        manage Actions secrets no matter what `permissions:`
+#                        says, so rewriting KIDSNOTE_SESSION_COOKIE needs one.
+
+name: Kidsnote session refresh
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 02:40 KST daily - 35 minutes ahead of the 03:15 KST mirror, so a cookie
+    # that died overnight is replaced before the first mirror of the day.
+    - cron: "40 17 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kidsnote-session-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+
+      - name: Probe cookie, refresh only if dead
+        id: refresh
+        env:
+          KIDSNOTE_SESSION_COOKIE: ${{ secrets.KIDSNOTE_SESSION_COOKIE }}
+          KIDSNOTE_USERNAME: ${{ secrets.KIDSNOTE_USERNAME }}
+          KIDSNOTE_PASSWORD: ${{ secrets.KIDSNOTE_PASSWORD }}
+          PYTHONUNBUFFERED: "1"
+        run: |
+          python tools/kidsnote_fetch/refresh_session.py \
+            --session-out "${RUNNER_TEMP}/kidsnote-session"
+
+      # Piped through stdin rather than --body so the cookie never lands in a
+      # command line or the process table.
+      - name: Store refreshed cookie
+        if: ${{ steps.refresh.outputs.refreshed == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GH_SECRETS_PAT }}
+        run: |
+          set -eu
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::Cookie was refreshed but GH_SECRETS_PAT is unset, so it cannot be saved."
+            exit 1
+          fi
+          gh secret set KIDSNOTE_SESSION_COOKIE \
+            --repo "${GITHUB_REPOSITORY}" \
+            < "${RUNNER_TEMP}/kidsnote-session"
+          echo "KIDSNOTE_SESSION_COOKIE updated."
+
+      - name: Clean up
+        if: always()
+        run: rm -f "${RUNNER_TEMP}/kidsnote-session"

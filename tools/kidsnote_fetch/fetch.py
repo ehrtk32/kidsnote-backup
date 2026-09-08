@@ -156,6 +156,90 @@ def _load_session_from_browser(browser: str) -> requests.Session:
     return sess
 
 
+def _session_is_live(sess: requests.Session) -> bool | None:
+    """Cheap liveness probe: /api/v1/me/children/ 401s once the cookie dies.
+
+    Tri-state on purpose. Only a 401 proves the cookie is gone; a network blip
+    or a 5xx means we simply could not tell, and answering "dead" there would
+    burn a login for nothing -- which matters because Kidsnote tracks
+    concurrent sessions and can flag an account as `blocked`.
+
+    Returns True (live), False (definitely dead), or None (unknown).
+    """
+    try:
+        r = sess.get(f"{KIDSNOTE_BASE}/api/v1/me/children/", timeout=20)
+    except requests.RequestException as exc:
+        _LOGGER.warning("Session probe inconclusive (network): %s", exc)
+        return None
+    if r.status_code == 401:
+        return False
+    if r.status_code >= 500:
+        _LOGGER.warning("Session probe inconclusive (HTTP %s)", r.status_code)
+        return None
+    return True
+
+
+def _login_with_password(username: str, password: str) -> requests.Session:
+    """Trade username/password for a fresh `sessionid` cookie.
+
+    The web client is a Next.js SPA, but the form still posts plain JSON to
+    /api/v1/users/login/, so no browser is needed. Confirmed against the
+    login bundle: the payload is {username, password, remember_me} with no
+    captcha or device token.
+
+    The server decides on its own whether to demand a second factor. When it
+    does, the response carries a `two-factor` step and we cannot continue
+    unattended -- the caller has to fall back to a manually extracted cookie.
+    """
+    sess = _baseline_session()
+    sess.headers["Origin"] = KIDSNOTE_BASE
+    sess.headers["Referer"] = f"{KIDSNOTE_BASE}/login"
+    r = sess.post(
+        f"{KIDSNOTE_BASE}/api/v1/users/login/",
+        json={"username": username, "password": password, "remember_me": True},
+        timeout=30,
+    )
+
+    try:
+        body = r.json()
+    except ValueError:
+        body = {}
+    code = (body or {}).get("code") or ""
+
+    if r.status_code >= 400 or code:
+        if code == "blocked":
+            raise RuntimeError(
+                "Kidsnote refused the login: account blocked. Log in from a "
+                "browser and clear whatever hold is on the account."
+            )
+        if code == "already_login":
+            raise RuntimeError(
+                "Kidsnote reports the account is already logged in elsewhere "
+                "and refused a second session."
+            )
+        if r.status_code == 401:
+            raise RuntimeError(
+                "Kidsnote rejected the credentials (401). Check "
+                "KIDSNOTE_USERNAME / KIDSNOTE_PASSWORD."
+            )
+        raise RuntimeError(f"Login failed: HTTP {r.status_code} {r.text[:300]}")
+
+    if (body or {}).get("second_factors") or (body or {}).get("secondFactors"):
+        raise RuntimeError(
+            "Kidsnote demanded two-factor auth for this login, so it cannot "
+            "run unattended. Fall back to KIDSNOTE_SESSION_COOKIE."
+        )
+
+    if not sess.cookies.get("sessionid", domain="www.kidsnote.com"):
+        raise RuntimeError(
+            f"Login returned HTTP {r.status_code} but set no sessionid cookie. "
+            f"Response keys: {sorted((body or {}).keys())}"
+        )
+
+    _LOGGER.info("Logged in as %s - fresh sessionid acquired", username)
+    return sess
+
+
 def _list_children(sess: requests.Session) -> list[dict[str, Any]]:
     """Look up the children registered under the logged-in account.
 
@@ -587,14 +671,22 @@ def main(argv: list[str] | None = None) -> int:
                          "Reads NOTION_TOKEN + NOTION_DATABASE_ID from .env or "
                          "process env (whichever is set).")
     ap.add_argument("--auth-mode", default="session-cookie-env",
-                    choices=["session-cookie-env", "browser-cookie"],
+                    choices=["session-cookie-env", "browser-cookie", "login", "auto"],
                     help="session-cookie-env (default): reads KIDSNOTE_SESSION_COOKIE "
                          "(value of `sessionid`) from env. Required for headless CI. "
-                         "browser-cookie: pulls cookies from a locally logged-in browser.")
+                         "browser-cookie: pulls cookies from a locally logged-in browser. "
+                         "login: trades KIDSNOTE_USERNAME/KIDSNOTE_PASSWORD for a fresh "
+                         "sessionid. auto: reuse the stored cookie while it still works "
+                         "and only log in once it dies -- keeps logins to ~1/month.")
     ap.add_argument("--env-file", type=Path,
                     default=Path(__file__).resolve().parents[2] / ".env",
                     help="Path to the .env that holds KIDSNOTE_SESSION_COOKIE / NOTION_TOKEN / "
                          "NOTION_DATABASE_ID. Ignored if the same names exist in process env (CI mode).")
+    ap.add_argument("--session-out", type=Path,
+                    help="When a fresh sessionid is minted (login/auto mode), write it "
+                         "to this file so the caller can push it back into "
+                         "KIDSNOTE_SESSION_COOKIE. Not written when the stored cookie "
+                         "was reused.")
     ap.add_argument("--browser", default="auto",
                     choices=["chrome", "firefox", "edge", "auto"],
                     help="(--auth-mode browser-cookie only)")
@@ -677,7 +769,54 @@ def main(argv: list[str] | None = None) -> int:
     env = _load_env_file(args.env_file) if args.env_file.exists() else {}
 
     # ---- auth -----
-    if args.auth_mode == "session-cookie-env":
+    # `auto` is the mode CI wants: the stored cookie is good for 30 days from
+    # the login that minted it, so reuse it until it actually stops working
+    # and only then spend a login. That keeps us at roughly one login a month
+    # instead of four a day, which matters because Kidsnote tracks concurrent
+    # sessions (`already_login`) and can flag an account as `blocked`.
+    minted_cookie: str | None = None
+
+    def _session_from_cookie(value: str) -> requests.Session:
+        s = _baseline_session()
+        s.cookies.set("sessionid", value, domain="www.kidsnote.com", path="/")
+        return s
+
+    def _login_session() -> requests.Session:
+        username = _resolve_secret(env, "KIDSNOTE_USERNAME")
+        password = _resolve_secret(env, "KIDSNOTE_PASSWORD")
+        if not username or not password:
+            sys.exit(
+                "KIDSNOTE_USERNAME / KIDSNOTE_PASSWORD are required for "
+                f"--auth-mode {args.auth_mode}. Set them in .env (local) or as "
+                "repo secrets (GitHub Actions)."
+            )
+        return _login_with_password(username, password)
+
+    if args.auth_mode == "browser-cookie":
+        sess = _load_session_from_browser(args.browser)
+    elif args.auth_mode == "login":
+        sess = _login_session()
+        minted_cookie = sess.cookies.get("sessionid", domain="www.kidsnote.com")
+    elif args.auth_mode == "auto":
+        cookie_val = _resolve_secret(env, "KIDSNOTE_SESSION_COOKIE")
+        sess = None
+        if cookie_val:
+            candidate = _session_from_cookie(cookie_val)
+            live = _session_is_live(candidate)
+            if live is False:
+                _LOGGER.warning("Stored sessionid is dead - logging in for a fresh one")
+            else:
+                if live is None:
+                    _LOGGER.warning("Could not verify sessionid - using it as-is")
+                else:
+                    _LOGGER.info("Stored sessionid still valid - reusing it")
+                sess = candidate
+        else:
+            _LOGGER.warning("No stored sessionid - logging in for a fresh one")
+        if sess is None:
+            sess = _login_session()
+            minted_cookie = sess.cookies.get("sessionid", domain="www.kidsnote.com")
+    else:
         cookie_val = _resolve_secret(env, "KIDSNOTE_SESSION_COOKIE")
         if not cookie_val:
             sys.exit(
@@ -685,11 +824,16 @@ def main(argv: list[str] | None = None) -> int:
                 "value for kidsnote.com from a logged-in browser session and "
                 "set it in .env (local) or as a repo secret (GitHub Actions)."
             )
-        sess = _baseline_session()
-        sess.cookies.set("sessionid", cookie_val, domain="www.kidsnote.com", path="/")
+        sess = _session_from_cookie(cookie_val)
         _LOGGER.info("Using sessionid from KIDSNOTE_SESSION_COOKIE env var")
-    else:
-        sess = _load_session_from_browser(args.browser)
+
+    # Hand a freshly minted cookie back to the caller so it can be written into
+    # the repo secret; without that the next run would have to log in again.
+    if minted_cookie and args.session_out:
+        args.session_out.parent.mkdir(parents=True, exist_ok=True)
+        args.session_out.write_text(minted_cookie, encoding="utf-8")
+        args.session_out.chmod(0o600)
+        _LOGGER.info("Wrote fresh sessionid to %s", args.session_out)
 
     # ---- Resolve LLM master toggle once, used in two places ----
     # CLI flag wins; env var (= workflow input passthrough) is the fallback.
