@@ -36,6 +36,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import requests
+from urllib.parse import quote
 
 try:
     import browser_cookie3
@@ -179,32 +180,74 @@ def _session_is_live(sess: requests.Session) -> bool | None:
     return True
 
 
+def _second_factor_state(sess: requests.Session, username: str) -> list[dict[str, Any]]:
+    """Ask whether this account has two-factor auth turned on.
+
+    The web client checks this *before* posting credentials, via an
+    unauthenticated GET keyed on the username, and only takes the 2FA branch
+    when `is_enabled` is true and the factor list is non-empty. Mirroring that
+    order means we can report "2FA is on, automation cannot work" without
+    sending the password anywhere.
+    """
+    url = f"{KIDSNOTE_BASE}/api/v1/second-factors/{quote(username, safe='')}/"
+    r = sess.get(url, timeout=30)
+    if r.status_code == 404:
+        # Unknown username, or the account predates the 2FA feature.
+        return []
+    if r.status_code >= 400:
+        _LOGGER.warning("Could not read 2FA state (HTTP %s) - continuing", r.status_code)
+        return []
+    data = r.json() if r.content else {}
+    if not data.get("is_enabled"):
+        return []
+    factors = data.get("second_factors")
+    return factors if isinstance(factors, list) else []
+
+
 def _login_with_password(username: str, password: str) -> requests.Session:
     """Trade username/password for a fresh `sessionid` cookie.
 
-    The web client is a Next.js SPA, but the form still posts plain JSON to
-    /api/v1/users/login/, so no browser is needed. Confirmed against the
-    login bundle: the payload is {username, password, remember_me} with no
-    captcha or device token.
+    The web client is a Next.js SPA, but its login form still posts plain JSON
+    to /api/web/login/ (axios `baseURL` is "/api"), so no browser is needed.
+    Payload is {username, password, remember_me} with no captcha or device
+    token.
 
-    The server decides on its own whether to demand a second factor. When it
-    does, the response carries a `two-factor` step and we cannot continue
-    unattended -- the caller has to fall back to a manually extracted cookie.
+    Two-factor accounts cannot be driven unattended -- the second step wants a
+    code sent to a phone or email -- so we check for that first and bail with
+    an explanation rather than sending the password into a flow that cannot
+    finish.
     """
+    username = username.strip()
     sess = _baseline_session()
     sess.headers["Origin"] = KIDSNOTE_BASE
     sess.headers["Referer"] = f"{KIDSNOTE_BASE}/login"
+    sess.headers["Content-Type"] = "application/json"
+
+    factors = _second_factor_state(sess, username)
+    if factors:
+        kinds = ", ".join(
+            str(f.get("type") or f.get("method") or "?") for f in factors
+        ) or "unknown"
+        raise RuntimeError(
+            "Two-factor auth is enabled on this Kidsnote account "
+            f"(factors: {kinds}), so the cookie cannot be refreshed "
+            "unattended. Either turn 2FA off for this account or keep "
+            "refreshing KIDSNOTE_SESSION_COOKIE by hand."
+        )
+
     r = sess.post(
-        f"{KIDSNOTE_BASE}/api/v1/users/login/",
+        f"{KIDSNOTE_BASE}/api/web/login/",
         json={"username": username, "password": password, "remember_me": True},
         timeout=30,
     )
 
     try:
-        body = r.json()
+        body = r.json() if r.content else {}
     except ValueError:
         body = {}
-    code = (body or {}).get("code") or ""
+    if not isinstance(body, dict):
+        body = {}
+    code = body.get("code") or body.get("err_code") or ""
 
     if r.status_code >= 400 or code:
         if code == "blocked":
@@ -217,23 +260,18 @@ def _login_with_password(username: str, password: str) -> requests.Session:
                 "Kidsnote reports the account is already logged in elsewhere "
                 "and refused a second session."
             )
-        if r.status_code == 401:
+        if r.status_code in (400, 401, 403):
             raise RuntimeError(
-                "Kidsnote rejected the credentials (401). Check "
-                "KIDSNOTE_USERNAME / KIDSNOTE_PASSWORD."
+                f"Kidsnote rejected the credentials (HTTP {r.status_code}"
+                f"{', code=' + code if code else ''}). Check "
+                f"KIDSNOTE_USERNAME / KIDSNOTE_PASSWORD. Response: {r.text[:200]}"
             )
         raise RuntimeError(f"Login failed: HTTP {r.status_code} {r.text[:300]}")
-
-    if (body or {}).get("second_factors") or (body or {}).get("secondFactors"):
-        raise RuntimeError(
-            "Kidsnote demanded two-factor auth for this login, so it cannot "
-            "run unattended. Fall back to KIDSNOTE_SESSION_COOKIE."
-        )
 
     if not sess.cookies.get("sessionid", domain="www.kidsnote.com"):
         raise RuntimeError(
             f"Login returned HTTP {r.status_code} but set no sessionid cookie. "
-            f"Response keys: {sorted((body or {}).keys())}"
+            f"Response keys: {sorted(body.keys())}"
         )
 
     _LOGGER.info("Logged in as %s - fresh sessionid acquired", username)
