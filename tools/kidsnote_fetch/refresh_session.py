@@ -51,6 +51,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--session-out", type=Path, required=True,
                     help="Where to write a freshly minted sessionid. Only "
                          "written when the stored cookie had to be replaced.")
+    ap.add_argument("--force", action="store_true",
+                    help="Skip the probe and log in even if the stored cookie "
+                         "still works. Used to prove the login path works "
+                         "before the cookie actually expires; on success the "
+                         "fresh cookie replaces the stored one, which also "
+                         "restarts the 30-day clock.")
     ap.add_argument("--verbose", "-v", action="store_true")
     args = ap.parse_args(argv)
 
@@ -62,7 +68,9 @@ def main(argv: list[str] | None = None) -> int:
     env = _load_env_file(args.env_file) if args.env_file.exists() else {}
     cookie = _resolve_secret(env, "KIDSNOTE_SESSION_COOKIE")
 
-    if cookie:
+    if args.force:
+        _LOGGER.warning("--force: skipping probe, logging in to mint a fresh cookie")
+    elif cookie:
         sess = _baseline_session()
         sess.cookies.set("sessionid", cookie, domain="www.kidsnote.com", path="/")
         live = _session_is_live(sess)
@@ -78,7 +86,7 @@ def main(argv: list[str] | None = None) -> int:
             _emit("refreshed", "false")
             return 0
         _LOGGER.warning("Stored sessionid is dead - refreshing")
-    else:
+    elif not cookie:
         _LOGGER.warning("No stored sessionid - minting one")
 
     username = _resolve_secret(env, "KIDSNOTE_USERNAME")

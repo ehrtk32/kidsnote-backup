@@ -22,6 +22,13 @@ name: Kidsnote session refresh
 
 on:
   workflow_dispatch:
+    inputs:
+      force:
+        description: "쿠키가 살아 있어도 강제로 로그인해 갱신 (로그인 경로 검증용). 평소엔 off."
+        required: false
+        default: "off"
+        type: choice
+        options: ["off", "on"]
   schedule:
     # 02:40 KST daily - 35 minutes ahead of the 03:15 KST mirror, so a cookie
     # that died overnight is replaced before the first mirror of the day.
@@ -61,8 +68,12 @@ jobs:
           KIDSNOTE_PASSWORD: ${{ secrets.KIDSNOTE_PASSWORD }}
           PYTHONUNBUFFERED: "1"
         run: |
-          python tools/kidsnote_fetch/refresh_session.py \
-            --session-out "${RUNNER_TEMP}/kidsnote-session"
+          set -eu
+          ARGS=( "--session-out" "${RUNNER_TEMP}/kidsnote-session" )
+          if [ "${{ inputs.force }}" = "on" ]; then
+            ARGS+=( "--force" )
+          fi
+          python tools/kidsnote_fetch/refresh_session.py "${ARGS[@]}"
 
       # Piped through stdin rather than --body so the cookie never lands in a
       # command line or the process table.
