@@ -157,6 +157,20 @@ def _load_session_from_browser(browser: str) -> requests.Session:
     return sess
 
 
+def _sessionid_of(sess: requests.Session) -> str:
+    """Pull the sessionid value out of a session's jar.
+
+    Deliberately matches on name only. Kidsnote scopes the cookie to
+    `.kidsnote.com`, so `jar.get("sessionid", domain="www.kidsnote.com")`
+    returns None for a cookie that is sitting right there -- a silent None
+    that reads as "login failed" at every call site.
+    """
+    for c in sess.cookies:
+        if c.name == "sessionid" and c.value:
+            return c.value
+    return ""
+
+
 def _session_is_live(sess: requests.Session) -> bool | None:
     """Cheap liveness probe: /api/v1/me/children/ 401s once the cookie dies.
 
@@ -280,14 +294,13 @@ def _login_with_password(username: str, password: str) -> requests.Session:
     # domain: the server may scope it to `.kidsnote.com`, and an exact-domain
     # lookup for `www.kidsnote.com` would miss it and send us down the
     # body-fallback path for a cookie we already had.
-    jar = {c.name: c for c in sess.cookies}
     _LOGGER.debug(
         "Login response: cookies=%s body_keys=%s",
         [(c.name, c.domain) for c in sess.cookies],
         sorted(body.keys()),
     )
 
-    cookie = jar["sessionid"].value if "sessionid" in jar else ""
+    cookie = _sessionid_of(sess)
     source = "Set-Cookie"
     if not cookie:
         # Some deployments return the session in the JSON body instead.
@@ -876,7 +889,7 @@ def main(argv: list[str] | None = None) -> int:
         sess = _load_session_from_browser(args.browser)
     elif args.auth_mode == "login":
         sess = _login_session()
-        minted_cookie = sess.cookies.get("sessionid", domain="www.kidsnote.com")
+        minted_cookie = _sessionid_of(sess)
     elif args.auth_mode == "auto":
         cookie_val = _resolve_secret(env, "KIDSNOTE_SESSION_COOKIE")
         sess = None
@@ -895,7 +908,7 @@ def main(argv: list[str] | None = None) -> int:
             _LOGGER.warning("No stored sessionid - logging in for a fresh one")
         if sess is None:
             sess = _login_session()
-            minted_cookie = sess.cookies.get("sessionid", domain="www.kidsnote.com")
+            minted_cookie = _sessionid_of(sess)
     else:
         cookie_val = _resolve_secret(env, "KIDSNOTE_SESSION_COOKIE")
         if not cookie_val:

@@ -31,6 +31,7 @@ from fetch import (  # noqa: E402
     _login_with_password,
     _resolve_secret,
     _session_is_live,
+    _sessionid_of,
 )
 
 _LOGGER = logging.getLogger("kidsnote_refresh")
@@ -106,7 +107,12 @@ def main(argv: list[str] | None = None) -> int:
         _emit("refreshed", "false")
         return 1
 
-    fresh = sess.cookies.get("sessionid", domain="www.kidsnote.com")
+    fresh = _sessionid_of(sess)
+    if not fresh:
+        _LOGGER.error("Login reported success but yielded no sessionid value")
+        _emit("refreshed", "false")
+        return 1
+
     args.session_out.parent.mkdir(parents=True, exist_ok=True)
     args.session_out.write_text(fresh, encoding="utf-8")
     args.session_out.chmod(0o600)
