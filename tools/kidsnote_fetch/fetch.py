@@ -276,10 +276,29 @@ def _login_with_password(username: str, password: str) -> requests.Session:
             )
         raise RuntimeError(f"Login failed: HTTP {r.status_code} {r.text[:300]}")
 
-    if not sess.cookies.get("sessionid", domain="www.kidsnote.com"):
+    # /web/login/ hands the session back in the JSON body as `session_id`
+    # rather than as a Set-Cookie header, so the cookie jar comes back empty
+    # and we have to plant the value ourselves for the rest of the run.
+    cookie = sess.cookies.get("sessionid", domain="www.kidsnote.com")
+    if not cookie:
+        cookie = body.get("session_id") or body.get("sessionid") or ""
+        if cookie:
+            sess.cookies.set(
+                "sessionid", cookie, domain="www.kidsnote.com", path="/"
+            )
+    if not cookie:
         raise RuntimeError(
-            f"Login returned HTTP {r.status_code} but set no sessionid cookie. "
-            f"Response keys: {sorted(body.keys())}"
+            f"Login returned HTTP {r.status_code} but no session value, "
+            f"neither as a cookie nor in the body. Response keys: "
+            f"{sorted(body.keys())}"
+        )
+
+    # Prove the thing actually authenticates before handing it back, so a
+    # shape change here surfaces now instead of as a confusing 401 later.
+    if _session_is_live(sess) is False:
+        raise RuntimeError(
+            "Login succeeded and returned a session value, but it does not "
+            "authenticate against /api/v1/me/children/."
         )
 
     _LOGGER.info("Logged in as %s - fresh sessionid acquired", username)
