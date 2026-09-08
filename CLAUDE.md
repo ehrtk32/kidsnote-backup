@@ -23,8 +23,9 @@ Cloudflare Pages ◀──(2) static-export/export_static_site.py
 ```
 
 **(1) 수집 — `tools/kidsnote_fetch/`**
-- `fetch.py`: 키즈노트 API 크롤링(알림장·공지·앨범·식단·댓글) + CLI. 로그인은 불가능하고
-  `sessionid` 쿠키에 의존한다(`--auth-mode session-cookie-env` 또는 브라우저 쿠키 추출).
+- `fetch.py`: 키즈노트 API 크롤링(알림장·공지·앨범·식단·댓글) + CLI. 인증은 `sessionid`
+  쿠키로 하고, `--auth-mode`가 그 쿠키를 어디서 얻을지 정한다 — `session-cookie-env`(기본),
+  `browser-cookie`, `login`(아이디/비밀번호), `auto`(쿠키 재사용 후 죽으면 로그인).
   `TIME_BUDGET_SEC`(4h45m) + `DASHBOARD_RESERVE_SEC`(30m)로 스스로 시간을 재다가 중단하는데,
   GHA 러너 한도 안에서 끝내고 남은 분량은 다음 cron이 이어받게 하려는 설계다.
 - `notion_mirror.py`: Notion 업로드 + 선택적 LLM 가공. 여기 코드의 절반은 방어 로직이다 —
@@ -95,7 +96,13 @@ workflow_dispatch 입력으로는 cron 경로를 제어할 수 없다. 그래서
 ## 운영 메모
 
 - `.github/workflows/kidsnote-to-notion.yml`이 KST 03:15/09:15/15:15/21:15에 돌고, **성공했을
-  때만** `workflow_run` 트리거로 `seoi-kidsnote-static.yml`이 이어진다.
+  때만** `workflow_run` 트리거로 `seoi-kidsnote-static.yml`이 이어진다. 그 앞 02:40에
+  `kidsnote-session-refresh.yml`이 쿠키를 점검한다.
+- 시크릿을 쓰는 워크플로는 PAT가 필요하다(`GH_SECRETS_PAT`). 내장 `GITHUB_TOKEN`은
+  `permissions:`를 어떻게 주든 Actions 시크릿을 관리할 수 없다. PAT가 잘못되면 401
+  `Bad credentials`가 나오는데, 이는 scope 부족(403)이 아니라 토큰 자체가 무효라는 뜻이다.
+- **`tools/`는 `.gitignore`에 걸려 있지만 그 안의 스크립트는 CI가 실행한다.** 이 디렉터리에
+  새 파일을 추가하면 반드시 `git add -f` 할 것 — 아니면 CI가 checkout 후 파일 없음으로 죽는다.
 - 정적 워크플로는 배포 전에 `export-report.json`을 검사해 Cloudflare Pages 한도
   (20,000 파일 / 파일당 25 MiB)와 미디어 누락 0건을 강제한다. 이 게이트를 우회하지 말 것.
 - **`.env` 위치가 둘로 갈린다.** `export_static_site.py`는 `static-export/.env`를 읽고,
@@ -105,6 +112,20 @@ workflow_dispatch 입력으로는 cron 경로를 제어할 수 없다. 그래서
 - 로컬 자격증명은 `static-export/.env`(git 미추적), CI는 repo Secrets. `.env`에 남은 `WP_*`
   값은 WordPress를 쓰던 시절의 레거시로 현재 파이프라인에서 쓰이지 않는다. 값에 공백이
   있어서 `source .env`는 깨진다 — 두 스크립트 모두 자체 파서로 읽는다.
-- `KIDSNOTE_SESSION_COOKIE`는 ~30일마다 만료된다. mirror가 갑자기 실패하면 이것부터 의심할 것.
+- **`KIDSNOTE_SESSION_COOKIE`는 로그인 시점부터 정확히 30일 뒤 만료된다.** 사용해도 연장되지
+  않는다. `kidsnote-session-refresh.yml`이 매일 02:40 KST에 쿠키를 probe하고, 죽은 날에만
+  로그인해 시크릿을 다시 쓴다(2026-09-08 자동화, 전 구간 검증 완료). 매일 로그인하지 않는
+  이유는 키즈노트가 동시 세션을 추적(`already_login`)하고 계정을 `blocked` 처리할 수 있어서다.
+- **헤드리스 로그인은 가능하다.** 예전 주석의 "SPA라 불가능"은 틀렸다. 로그인 폼은 평범한
+  JSON을 `POST /api/web/login/`으로 보낸다(axios `baseURL`이 `/api`, 경로는 로그인 번들이
+  아니라 공유 청크에 있다). 페이로드는 `{username, password, remember_me}`이고 캡차가 없다.
+  주의할 함정 두 개: ① 엔드포인트를 추정하지 말 것 — `/api/v1/users/login/`은 무엇을 보내도
+  401을 주므로 자격증명 거부처럼 보인다. 진짜 경로는 빈 요청에 `400 invalid_login`을 준다.
+  ② 응답의 `sessionid` 쿠키는 `.kidsnote.com`으로 스코프되므로 `domain="www.kidsnote.com"`
+  으로 조회하면 `None`이 나온다. `_sessionid_of()`를 쓸 것.
+- `invalid_password` 에러는 아이디가 틀렸을 때도 똑같이 나온다(계정 열거 방지).
+  `/api/v1/second-factors/{username}/`도 없는 계정에 200을 주므로 존재 확인에 못 쓴다.
+- 2FA가 켜진 계정은 자동 갱신이 불가능하다. `fetch.py`가 비밀번호를 보내기 전에 먼저
+  확인하고 설명과 함께 중단한다. 현재 계정은 2FA 꺼짐.
 - `logs/`와 `backups/`는 gitignore 대상이다. `backups/launchd/`의 plist는 GitHub Actions로
   이관되기 전 로컬 스케줄러 잔재이며 현재 로드돼 있지 않다.
