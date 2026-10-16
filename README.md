@@ -3,7 +3,7 @@
 # 🍼 Kidsnote → Notion 자동 백업
 
 > **어린이집 알림장과 사진을, 내 노션 DB에 영원히.**
-> 졸업할 때 사라지지 않게.
+> 졸업할 때 사라지지 않게...
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Runs on GitHub Actions](https://img.shields.io/badge/runs%20on-GitHub%20Actions-2088FF?logo=githubactions&logoColor=white)](#8단계-백업-실행)
