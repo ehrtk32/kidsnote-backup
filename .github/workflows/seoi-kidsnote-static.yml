@@ -80,8 +80,15 @@ jobs:
               raise SystemExit("Some Notion media files were not downloaded")
           PY
 
+      # Runs from static-export/, not the repo root. Wrangler resolves both
+      # `functions/` and `wrangler.jsonc` relative to the working directory,
+      # never relative to the asset directory it is handed. Deploying
+      # `static-export/dist` from the root uploads the static files and
+      # silently drops the Functions and the D1 binding with them — the site
+      # looks fine and every /api/* request falls through to index.html.
       - name: Deploy to Cloudflare Pages
         if: ${{ github.event_name == 'workflow_run' || inputs.deploy == 'on' }}
+        working-directory: static-export
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID || '88b28a9c6734bd6185852a2804db5469' }}
@@ -95,7 +102,16 @@ jobs:
             echo "::error::Missing Cloudflare Account ID"
             exit 1
           fi
-          npx --yes wrangler pages deploy static-export/dist \
+          # Fail loudly rather than shipping an API-less site: losing these
+          # two files breaks comments, likes and the video list without
+          # breaking the build.
+          for required in functions wrangler.jsonc; do
+            if [ ! -e "${required}" ]; then
+              echo "::error::${required} missing from static-export/ — Functions would not be deployed"
+              exit 1
+            fi
+          done
+          npx --yes wrangler pages deploy dist \
             --project-name seoi-kidsnote \
             --branch main \
             --commit-dirty=true

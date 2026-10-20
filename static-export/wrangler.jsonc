@@ -1,0 +1,12 @@
+{
+  "name": "seoi-kidsnote",
+  "pages_build_output_dir": "dist",
+  "compatibility_date": "2026-10-20",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "papa_pjh",
+      "database_id": "f3c5379c-7d6b-4bb4-9d42-e5d037b80eed"
+    }
+  ]
+}
