@@ -1842,9 +1842,40 @@ body:not(.locked) .passcode-screen {
 /* ---------- 영상 ---------- */
 /* 목록은 .entry 행을 재사용한다. 여기 있는 건 영상에만 필요한 차이뿐이다. */
 .entry-thumb-video {
+  position: relative;
   color: var(--video);
   font-size: 20px;
   line-height: 1;
+}
+
+/* 썸네일로 쓰는 <video>. controls 가 없으므로 버튼 안에 들어가도 된다 —
+   controls 를 붙이면 상호작용 요소가 되어 버튼 중첩이 된다. */
+.entry-thumb-media {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  background: #000;
+}
+
+/* 첫 프레임 위에 얹는 재생 표시. 프레임이 밝으면 ▶ 가 묻혀서 어둡게 깐다. */
+.entry-thumb-video .entry-play {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 17px;
+  background: rgba(0, 0, 0, .22);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, .6);
+}
+
+/* 프레임을 못 받은 영상(공유 링크, 또는 실패)은 원래 모습으로 둔다. */
+.entry-thumb-video:not(:has(.entry-thumb-media)) .entry-play {
+  position: static;
+  background: none;
+  color: var(--video);
+  text-shadow: none;
 }
 
 .badge.video {
@@ -3428,6 +3459,112 @@ APP_JS = """(() => {
     renderListCollapseState();
   }
 
+  // 썸네일은 영상 자체의 첫 프레임이다. MYBOX 영상은 같은 출처(/stream)를
+  // 거치므로 <video> 가 그려 주고, 따로 저장할 그림이 없다.
+  //
+  // 몇 초 지점을 집을지는 받아 보고 정한다. 고정값을 쓰면 짧은 영상에서는
+  // 끝을 넘고, 초음파처럼 도입부가 어두운 영상에서는 검은 네모가 나온다.
+  function thumbOf(video) {
+    if (video.source !== "mybox") {
+      return '<span class="entry-thumb entry-thumb-video"><span class="entry-play"'
+        + ' aria-hidden="true">▶</span></span>';
+    }
+    const stream = `/api/videos/${encodeURIComponent(video.id)}/stream`;
+    return '<span class="entry-thumb entry-thumb-video">'
+      + `<video class="entry-thumb-media" data-stream="${escapeHtml(stream)}"`
+      + ' preload="none" muted playsinline tabindex="-1" aria-hidden="true"></video>'
+      + '<span class="entry-play" aria-hidden="true">▶</span>'
+      + "</span>";
+  }
+
+  // 목록에 보이는 것만 받아 온다. 썸네일 하나가 MYBOX 다운로드 URL 발급을
+  // 한 번씩 부르므로, 폴더가 커지면 화면을 열자마자 수십 번을 치게 된다.
+  // 초음파는 탐촉자를 대고 화면을 잡기까지가 검은 화면이고, 그 길이가 영상마다
+  // 다르다. 고정 지점을 쓰면 어떤 값을 골라도 몇 개는 검은 네모로 남는다.
+  // 그래서 받아 본 뒤 비었으면 다음 지점으로 넘긴다.
+  const THUMB_SEEK_STEPS = [6, 20, 45];
+
+  // 프레임이 비었는지 본다. 지표를 두 번 갈아탄 자리다.
+  //
+  //   평균 밝기 — 못 쓴다. 초음파는 원래 어두워서 빈 프레임 4, 멀쩡한 화면
+  //               8~19 로 거의 붙어 있다.
+  //   최대 밝기 — 못 쓴다. 측정 마커가 흰색이라 **모든** 프레임이 255 다.
+  //   밝은 픽셀 비율 — 쓴다. 빈 프레임 2.9%, 멀쩡한 화면 5.3~47% 로 갈린다.
+  //
+  // 실측값이라 영상이 바뀌면 다시 재야 한다.
+  const BLANK_BRIGHT_RATIO = 0.04;
+  const BLANK_BRIGHT_LEVEL = 45;
+
+  function frameIsBlank(media) {
+    const canvas = frameIsBlank.canvas
+      || (frameIsBlank.canvas = document.createElement("canvas"));
+    canvas.width = 32;
+    canvas.height = 32;
+    try {
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      ctx.clearRect(0, 0, 32, 32);
+      ctx.drawImage(media, 0, 0, 32, 32);
+      const data = ctx.getImageData(0, 0, 32, 32).data;
+      let bright = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        const level = (data[i] + data[i + 1] + data[i + 2]) / 3;
+        if (level > BLANK_BRIGHT_LEVEL) bright += 1;
+      }
+      return bright / (data.length / 4) < BLANK_BRIGHT_RATIO;
+    } catch {
+      // 캔버스를 못 읽으면 판단을 포기한다. 멀쩡한 프레임을 지우는 것보다
+      // 어두운 프레임을 두는 쪽이 낫다.
+      return false;
+    }
+  }
+
+  function loadThumb(media) {
+    // preload 를 먼저 올려야 한다. "none" 인 채로 src 만 넣으면 브라우저가
+    // 아무것도 받지 않아서 첫 프레임이 영영 안 그려진다.
+    media.preload = "metadata";
+
+    // 탐색은 그 위치만 범위 요청으로 받으므로, 뒤로 가도 처음부터 받지 않는다.
+    let step = 0;
+    const seekOn = () => {
+      if (step >= THUMB_SEEK_STEPS.length || !Number.isFinite(media.duration)) return;
+      const at = Math.min(THUMB_SEEK_STEPS[step], media.duration * 0.9);
+      step += 1;
+      // 짧은 영상은 두 지점이 같은 곳으로 눌린다. 그대로 넣으면 seeked 가
+      // 안 울려서 조용히 멈춘다.
+      if (Math.abs(at - media.currentTime) < 0.05) {
+        seekOn();
+        return;
+      }
+      media.currentTime = at;
+    };
+
+    media.addEventListener("loadedmetadata", seekOn, { once: true });
+    media.addEventListener("seeked", () => {
+      if (frameIsBlank(media)) seekOn();
+    });
+    media.src = media.dataset.stream;
+    // 실패하면 흔적을 지운다. 깨진 <video> 를 두면 검은 네모가 남아서
+    // 썸네일이 있는 척하게 된다. 코덱을 못 여는 브라우저도 여기로 온다.
+    media.addEventListener("error", () => media.remove(), { once: true });
+  }
+
+  const thumbLoader = "IntersectionObserver" in window
+    ? new IntersectionObserver((entries, observer) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          observer.unobserve(entry.target);
+          loadThumb(entry.target);
+        }
+      }, { rootMargin: "200px" })
+    : null;
+
+  function loadVisibleThumbs() {
+    entryList.querySelectorAll(".entry-thumb-media[data-stream]").forEach((media) => {
+      if (thumbLoader) thumbLoader.observe(media);
+      else loadThumb(media);
+    });
+  }
+
   function renderVideoList() {
     const videos = filteredVideos();
     const filters = [state.activeMonth, state.query.trim()].filter(Boolean).length;
@@ -3457,7 +3594,7 @@ APP_JS = """(() => {
       return (
         '<div class="entry-row">'
         + `<button class="entry" type="button" data-video-id="${escapeHtml(video.id)}">`
-        + '<span class="entry-thumb entry-thumb-video" aria-hidden="true">▶</span>'
+        + thumbOf(video)
         + "<span>"
         + `<span class="entry-kicker"><span class="badge video">영상</span>${date}</span>`
         + `<span class="entry-title">${escapeHtml(video.title)}</span>${summary}`
@@ -3467,6 +3604,8 @@ APP_JS = """(() => {
         + "</div>"
       );
     }).join("");
+
+    loadVisibleThumbs();
   }
 
   function renderList() {

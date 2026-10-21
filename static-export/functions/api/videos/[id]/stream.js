@@ -64,9 +64,14 @@ export async function onRequestGet({ request, env, params }) {
   const headers = new Headers();
   headers.set("Content-Type", guessType(row.title));
   headers.set("Accept-Ranges", "bytes");
-  // 영상 자체는 안 바뀌므로 잠깐 캐시해도 되지만, 서명된 상류 URL 과 섞이면
-  // 헷갈리므로 캐시하지 않는다. 가족 몇 명이 보는 트래픽이라 이득도 작다.
-  headers.set("Cache-Control", "no-store");
+  // 상류 URL 은 **1회용**이라(두 번째 사용에 403) 발급 횟수를 캐시로 줄일 수
+  // 없다. 줄일 수 있는 것은 브라우저가 같은 구간을 다시 달라고 하는 횟수다.
+  // no-store 로 두면 메타데이터·탐색·버퍼링이 서로의 결과를 못 쓰고 매번
+  // 새로 받는다 — 썸네일 18개짜리 목록 한 번에 /stream 이 101번 불렸다.
+  //
+  // 응답에 서명된 URL 은 들어 있지 않고 바이트만 흐르므로 캐시해도 샐 것이
+  // 없다. 공유 캐시까지 가지 않게 private 으로 둔다.
+  headers.set("Cache-Control", "private, max-age=600");
   for (const key of ["Content-Length", "Content-Range"]) {
     const value = upstream.headers.get(key);
     if (value) headers.set(key, value);
