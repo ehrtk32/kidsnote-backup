@@ -14,13 +14,61 @@ README 대신 소스를 읽을 것.
 
 ## 아키텍처
 
-두 단계가 GitHub Actions에서 체이닝된다. 로컬 실행도 같은 스크립트를 쓴다.
+정적 파이프라인과 동적 계층 둘로 나뉜다.
 
 ```
-키즈노트 API ──(1) tools/kidsnote_fetch/fetch.py──▶ Notion DB
-                                                      │
-Cloudflare Pages ◀──(2) static-export/export_static_site.py
+                   ┌─ 정적: cron 이 하루 한 번 dist/ 를 통째로 다시 만든다 ─┐
+키즈노트 API ─(1)─▶ Notion ─(2)─▶ │  알림장·앨범·공지 본문, 사진 파일, photos.json │
+                   └────────────────────────────────────────────────────┘
+                                          +
+                   ┌─ 동적: 사람이 쓰고 D1 에 남는다 ────────────────────┐
+   브라우저 ◀─API─▶ │  영상 목록 · 댓글 · 좋아요 · 관리자 비번             │
+                   └────────────────────────────────────────────────────┘
 ```
+
+**사람이 쓴 것은 절대 `dist/` 에 두지 말 것.** 다음 cron 이 지운다. 전부 D1 으로 간다.
+
+- (1) 수집: `tools/kidsnote_fetch/fetch.py` → Notion
+- (2) 정적 export: `static-export/export_static_site.py` → `dist/`
+- (3) API: `static-export/functions/` (Pages Functions) ↔ D1 `papa_pjh`
+- (4) 스케줄: `cron-worker/` (Cloudflare Worker) → GitHub workflow_dispatch
+
+### D1 `papa_pjh` (APAC, id `f3c5379c-7d6b-4bb4-9d42-e5d037b80eed`)
+
+| 표 | 내용 |
+|---|---|
+| `videos` | 영상. `source` 가 `link`(공유링크·iframe) / `mybox`(API·`<video>`) 를 가른다 |
+| `comments` | 익명 댓글. 글(`post`)·영상(`video`) 공용 |
+| `photo_likes` | 사진당 1행 카운터. 누른 **횟수** 를 센다 |
+| `auth_attempts` | IP 별 잠금·도배 카운터. 비번·댓글·좋아요가 같이 쓴다 |
+| `settings` | 관리자 비번 해시 등 런타임 설정 |
+
+스키마는 `static-export/schema.sql`. 적용:
+```bash
+cd static-export
+npx wrangler d1 execute papa_pjh --remote --file=schema.sql
+```
+
+### API 목록 (`static-export/functions/api/`)
+
+```
+ping                     상태 + D1 바인딩 확인
+videos                   GET 목록 / POST 추가(관리자)
+videos/[id]              DELETE (관리자)
+videos/[id]/play         재생 정보
+videos/[id]/stream       MYBOX 영상 중계 — content-type 교정 + Range 통과
+comments                 GET / POST (누구나)
+comments/[id]            DELETE (관리자)
+likes                    GET 집계·랭킹 / POST +1 (누구나)
+admin/check              비번 확인만
+admin/passcode           비번 변경
+mybox/status             토큰 상태 (인증 없음 — Worker 가 점검)
+mybox/list               폴더 목록 (관리자)
+mybox/sync               폴더 → 영상 등록 (관리자)
+mybox/download           10분 URL 발급 (관리자)
+```
+
+`_` 로 시작하는 파일(`_lib.js`, `mybox/_client.js`)은 라우트가 아니라 공용 모듈이다.
 
 **(1) 수집 — `tools/kidsnote_fetch/`**
 - `fetch.py`: 키즈노트 API 크롤링(알림장·공지·앨범·식단·댓글) + CLI. 인증은 `sessionid`
@@ -63,6 +111,21 @@ STATIC_EXPORT_DEPLOY=0 ./run_daily_export.sh   # 배포 없이 export만
 # 로그인된 브라우저에서 쿠키를 빌려온다. --backup-root는 --no-local-save가 없으면 필수다.
 python3 tools/kidsnote_fetch/fetch.py \
   --auth-mode browser-cookie --backup-root /tmp/kidsnote-check --limit 3 --verbose
+
+# Functions + D1 까지 띄우는 로컬 실행. pages dev 는 wrangler.jsonc 의 바인딩을
+# 읽지 않으므로 플래그로 줘야 한다. 로컬 D1 은 원격과 별개의 빈 복제본이다.
+cd static-export
+npx wrangler pages dev --port 9600 \
+  --d1 DB=f3c5379c-7d6b-4bb4-9d42-e5d037b80eed \
+  --binding ADMIN_PASSCODE=... --binding MYBOX_TOKEN=...
+
+# cron Worker (CI 가 배포하지 않는다 — 고쳤으면 직접 올려야 한다)
+cd cron-worker && npx wrangler deploy
+npx wrangler tail kidsnote-cron --format pretty
+
+# D1 들여다보기
+cd static-export
+npx wrangler d1 execute papa_pjh --remote --command "SELECT COUNT(*) FROM videos"
 
 # 워크플로 수동 트리거 / 상태 확인
 gh workflow run "Seoi Kidsnote static site" -R ehrtk32/kidsnote-backup
@@ -139,6 +202,16 @@ npx wrangler pages dev --port 9600 --d1 DB=f3c5379c-7d6b-4bb4-9d42-e5d037b80eed
 이 토큰은 OAuth 가 아니라 **계정 전체**에 접근하므로, 이걸 쓰는 엔드포인트는 전부
 관리자 전용이다. 예외는 `/stream` 과 `/play` — 등록된 영상만 열고 드라이브는 못 뒤진다.
 
+**관리자는 모달이 아니라 세션이다.** 숨은 핫스팟 → 비번 → `/api/admin/check` 가 확인하면
+`body.is-admin` 이 붙고 영상·댓글에 삭제 버튼이 나타난다. 하단에 "관리자 모드" 배지가 뜬다.
+핫스팟을 다시 누르면 패널이 열리고 거기 "관리자 모드 끄기" 가 있다.
+
+세션은 **sessionStorage** 에 산다(`kidsnote.admin`). 글 상세(`/posts/123/`)가 실제 페이지
+이동이라 메모리에만 두면 글 하나 열 때마다 비번을 다시 넣어야 한다. 탭을 닫으면 사라진다.
+
+**수동 영상 추가 폼은 없앴다.** MYBOX 폴더 동기화가 대체했다. 공유 링크 영상을 넣어야 하면
+`POST /api/videos` 를 직접 치거나 폼을 되살려야 한다.
+
 **관리자 모드 진입은 보이지 않는다.** PC는 **사이드바 하단**(동기화 시각 줄), 모바일은
 **화면 우상단 모서리 56×56px**를 누르면 팝업이 뜬다(`.admin-hotspot-desktop` /
 `.admin-hotspot-mobile`, 경계 860px). `aria-hidden` + `tabindex=-1`이라 탭 이동으로는
@@ -169,6 +242,32 @@ Notion에서 이름 변경하면 export가 하드 에러로 죽는다. 현 DB �
 workflow_dispatch 입력으로는 cron 경로를 제어할 수 없다. 그래서 의도적으로 입력에서 제거됐다.
 워크플로가 이 값을 뒤집어 `DISABLE_*` 환경변수로 `fetch.py`에 넘긴다. 같은 이유로
 자녀 선택(`KIDSNOTE_CHILD_NAME`)도 입력이 아닌 시크릿이다.
+
+## 현재 상태 (2026-10-21)
+
+동작 중:
+- 스케줄 = Cloudflare Worker (`cron-worker/`). GitHub `schedule:` 은 주석 처리됨
+- D1 `papa_pjh` + Pages Functions 가 프로덕션에 배포돼 동작
+- 영상: MYBOX 폴더 동기화 → `<video>` 재생 (`/stream` 경유)
+- 댓글·사진 좋아요·사진 모아보기(6,598장)
+- 관리자 세션 + 영상/댓글 삭제
+
+시크릿 (Pages, production + preview 각각):
+```
+ADMIN_PASSCODE   초기값만. 한 번 변경하면 settings 표가 우선한다
+MYBOX_TOKEN      개인 액세스 토큰, 최대 180일
+```
+Worker 시크릿: `GH_DISPATCH_TOKEN` (GitHub classic PAT, repo·workflow 스코프)
+
+### 남은 일
+
+| | 내용 |
+|---|---|
+| 경보 전달 | `cron-worker/src/index.js` 의 `notify()` 가 로그만 남긴다. 웹훅 한 줄이면 됨. **탐지는 이미 돈다** (신선도·MYBOX 토큰) |
+| MYBOX 자동 동기화 | 지금은 관리자가 "가져오기" 를 눌러야 한다. 자동화하려면 폴더→자녀 매핑을 저장하고 Worker 가 칠 엔드포인트가 필요 |
+| 삭제 동기화 | MYBOX 에서 지운 영상이 목록에 남는다. 개별 삭제로만 치울 수 있다 |
+| CI 미디어 캐시 | 매 실행 5.4GB 재다운로드. 하루 1회로 줄어 체감은 작다. 안 고치는 것도 선택지 |
+| 살구 정보 | 생년월일·프로필 사진이 생기면 `children` 배열에 세 줄 |
 
 ## 운영 메모
 
