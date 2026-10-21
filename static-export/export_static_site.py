@@ -1909,105 +1909,15 @@ body:not(.locked) .passcode-screen {
 }
 
 /* ---------- 영상 ---------- */
-.video-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 14px;
-  padding: 14px;
+/* 목록은 .entry 행을 재사용한다. 여기 있는 건 영상에만 필요한 차이뿐이다. */
+.entry-thumb-video {
+  color: var(--video);
+  font-size: 20px;
+  line-height: 1;
 }
 
-.video-card {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 0 0 12px;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: var(--surface);
-  text-align: left;
-  cursor: pointer;
-  overflow: hidden;
-  transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
-}
-
-.video-card:hover,
-.video-card:focus-visible {
-  border-color: var(--video);
-  box-shadow: var(--shadow);
-  transform: translateY(-2px);
-}
-
-.video-card-frame {
-  position: relative;
-  display: block;
-  aspect-ratio: 16 / 9;
-  background: var(--surface-soft);
-}
-
-.video-card-thumb {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-
-.video-card-thumb-empty {
-  display: block;
-  background: linear-gradient(135deg, var(--surface-soft), var(--line));
-}
-
-.video-card-play {
-  position: absolute;
-  inset: 0;
-  margin: auto;
-  width: 52px;
-  height: 52px;
-  border-radius: 50%;
-  background: rgba(16, 18, 17, .62);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, .3);
-}
-
-.video-card-play::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  margin: auto;
-  width: 0;
-  height: 0;
-  border-style: solid;
-  border-width: 9px 0 9px 15px;
-  border-color: transparent transparent transparent #fff;
-  transform: translateX(2px);
-}
-
-.video-card:hover .video-card-play {
+.badge.video {
   background: var(--video);
-}
-
-.video-card-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding: 0 12px;
-  min-width: 0;
-}
-
-.video-card-date {
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.video-card-title {
-  font-weight: 650;
-  font-size: 15px;
-  color: var(--ink);
-  overflow-wrap: anywhere;
-}
-
-.video-card-summary {
-  font-size: 13px;
-  color: var(--muted);
-  overflow-wrap: anywhere;
 }
 
 /* ---------- 영상 모달 ---------- */
@@ -2105,11 +2015,6 @@ body.modal-open {
 }
 
 @media (max-width: 640px) {
-  .video-grid {
-    grid-template-columns: 1fr;
-    padding: 12px;
-  }
-
   .video-modal {
     padding: 0;
   }
@@ -2913,23 +2818,23 @@ APP_JS = """(() => {
       return;
     }
 
-    entryList.innerHTML = `<div class="video-grid">${videos.map((video) => {
-      const thumb = video.thumbnail_url
-        ? `<img class="video-card-thumb" src="${escapeHtml(video.thumbnail_url)}" alt="" loading="lazy">`
-        : '<span class="video-card-thumb video-card-thumb-empty" aria-hidden="true"></span>';
-      const date = video.date ? `<span class="video-card-date">${escapeHtml(video.date)}</span>` : "";
+    // 알림장·앨범·공지가 쓰는 .entry 행을 그대로 쓴다. 썸네일이 없으니
+    // 카드 그리드를 유지할 이유가 없고, .entry 가 이미 width/border/background
+    // 를 눕혀 둬서 <button> 에 그대로 붙는다.
+    entryList.innerHTML = videos.map((video) => {
+      const date = video.date ? `<span>${escapeHtml(video.date)}</span>` : "";
       const summary = video.summary
-        ? `<span class="video-card-summary">${escapeHtml(video.summary)}</span>`
+        ? `<span class="entry-summary">${escapeHtml(video.summary)}</span>`
         : "";
       return (
-        `<button class="video-card" type="button" data-video-id="${escapeHtml(video.id)}">`
-        + `<span class="video-card-frame">${thumb}`
-        + '<span class="video-card-play" aria-hidden="true"></span></span>'
-        + `<span class="video-card-copy">${date}`
-        + `<span class="video-card-title">${escapeHtml(video.title)}</span>${summary}</span>`
-        + "</button>"
+        `<button class="entry" type="button" data-video-id="${escapeHtml(video.id)}">`
+        + '<span class="entry-thumb entry-thumb-video" aria-hidden="true">▶</span>'
+        + "<span>"
+        + `<span class="entry-kicker"><span class="badge video">영상</span>${date}</span>`
+        + `<span class="entry-title">${escapeHtml(video.title)}</span>${summary}`
+        + "</span></button>"
       );
-    }).join("")}</div>`;
+    }).join("");
   }
 
   function renderList() {
