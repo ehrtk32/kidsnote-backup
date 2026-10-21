@@ -1147,9 +1147,12 @@ body:not(.locked) .passcode-screen {
   object-fit: contain;
 }
 
-/* 크게 열 게 없으니 확대 커서도 쓰지 않는다. 플레이스홀더와 같은 이유다. */
+/* 크게 열 게 없으니 확대 커서도 쓰지 않는다. 플레이스홀더와 같은 이유다.
+   그림이 투명 PNG 라 원의 배경색이 그대로 비친다. 기본값(연한 회녹색)을 두면
+   살빛이 탁해 보여서 따뜻한 쪽으로 깐다. */
 .profile-photo.is-illustration {
   cursor: default;
+  background: #fdf0e6;
 }
 
 .profile-photo.is-illustration:hover {
@@ -2895,7 +2898,9 @@ APP_JS = """(() => {
       // 거꾸로 센 값이다. 병원에서 주수를 다시 잡아 주면 이 날짜만 옮기면
       // 되고, 출산예정일도 여기서 따라 나온다(+280일 = 2027-05-05).
       lmp: "2026-07-29",
-      photo: "/assets/fetus.svg",
+      // 주수가 바뀌면 renderProfile 이 fetus-1..9 중에서 골라 덮어쓴다.
+      // 여기 값은 주수를 못 셀 때(기준일이 미래일 때)만 쓰인다.
+      photo: "/assets/fetus-1.png",
       illustration: true,
     },
   ];
@@ -3115,6 +3120,19 @@ APP_JS = """(() => {
     return { weeks: Math.floor(days / 7), days: days % 7 };
   }
 
+  // 태아 그림 9장의 달 경계(주차). 달력 기준 9개월이라 간격이 고르지 않아서
+  // 식으로 꾸미면 22주처럼 경계에 걸친 주가 한 달씩 밀린다. 표를 그대로 적는
+  // 편이 눈으로 확인하기 쉽다.
+  const FETAL_MONTH_WEEKS = [0, 5, 9, 14, 18, 23, 28, 32, 36];
+
+  function fetalImage(weeks) {
+    let month = 1;
+    FETAL_MONTH_WEEKS.forEach((start, index) => {
+      if (weeks >= start) month = index + 1;
+    });
+    return `/assets/fetus-${month}.png`;
+  }
+
   // 출산예정일은 통상 lmp + 280일이다. 따로 적어 두면 주수와 어긋날 수
   // 있으니 기준일 하나에서 뽑는다.
   function dueDate(lmp) {
@@ -3128,8 +3146,13 @@ APP_JS = """(() => {
     brandRoman.textContent = child.roman;
     profileName.textContent = child.name;
 
-    if (child.photo) {
-      profileImage.src = child.photo;
+    // 그림과 아래 줄이 같은 계산을 써야 "12주"인데 4개월 그림이 뜨는 일이
+    // 없다. 그래서 주수는 여기서 한 번만 센다.
+    const term = !child.birth && child.lmp ? gestation(child.lmp) : null;
+    const photo = term ? fetalImage(term.weeks) : child.photo;
+
+    if (photo) {
+      profileImage.src = photo;
       profileImage.alt = child.name;
       profilePhoto.hidden = false;
       profilePhoto.setAttribute("aria-label", `${child.name} 사진 크게 보기`);
@@ -3153,14 +3176,12 @@ APP_JS = """(() => {
         `<time datetime="${escapeHtml(child.birth)}">${escapeHtml(child.birth.replaceAll("-", "."))}</time>`
         + '<span aria-hidden="true">·</span>'
         + `<strong>D+${Math.max(1, days)}</strong>`;
-    } else if (child.lmp) {
-      const term = gestation(child.lmp);
+    } else if (term) {
       const due = dueDate(child.lmp);
-      profileMeta.innerHTML = term
-        ? `<time datetime="${escapeHtml(due)}">${escapeHtml(due.replaceAll("-", "."))} 예정</time>`
-          + '<span aria-hidden="true">·</span>'
-          + `<strong>${term.weeks}주 ${term.days}일</strong>`
-        : "";
+      profileMeta.innerHTML =
+        `<time datetime="${escapeHtml(due)}">${escapeHtml(due.replaceAll("-", "."))} 예정</time>`
+        + '<span aria-hidden="true">·</span>'
+        + `<strong>${term.weeks}주 ${term.days}일</strong>`;
     } else {
       profileMeta.textContent = "";
     }
