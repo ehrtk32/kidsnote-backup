@@ -18,6 +18,8 @@ import {
   normalizeDate,
   normalizeText,
   videoSlug,
+  fetchLinkTitle,
+  titleFromUrl,
   CHILD_KEYS,
 } from "../_lib.js";
 
@@ -79,10 +81,15 @@ export async function onRequestPost({ request, env }) {
   const videoDate = normalizeDate(body.date);
   if (videoDate === null) return badRequest("date must be YYYY-MM-DD");
 
-  // 제목이 비면 목록에서 구분할 수가 없다. 링크를 그대로 보여 주는 것보다
-  // 받아내는 편이 낫다 — 어차피 폼에서 한 줄이다.
-  const title = normalizeText(body.title, MAX_TITLE);
-  if (!title) return badRequest("title is required");
+  // 제목은 선택이다. 비워 두면 공유 링크가 스스로 말하는 제목(og:title 또는
+  // <title>)을 한 번 읽어 쓴다. 그마저 없으면 URL 의 마지막 조각을 쓴다 —
+  // 목록에서 무엇인지 구분은 돼야 하므로 빈 제목으로 두지는 않는다.
+  let title = normalizeText(body.title, MAX_TITLE);
+  if (!title) {
+    title = normalizeText(await fetchLinkTitle(url), MAX_TITLE)
+      || normalizeText(titleFromUrl(url), MAX_TITLE)
+      || "영상";
+  }
 
   const summary = normalizeText(body.summary, MAX_SUMMARY);
   const id = await videoSlug(url);

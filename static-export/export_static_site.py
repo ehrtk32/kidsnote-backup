@@ -828,6 +828,7 @@ INDEX_HTML = """<!doctype html>
         <button class="admin-close" type="button" aria-label="닫기">&times;</button>
       </header>
 
+      <div class="admin-body">
       <form class="admin-form" id="adminLoginForm">
         <label for="adminPasscode">관리자 비밀번호</label>
         <input id="adminPasscode" type="password" inputmode="numeric" autocomplete="off" placeholder="6자리">
@@ -839,7 +840,7 @@ INDEX_HTML = """<!doctype html>
         <select id="videoChild"></select>
         <label for="videoUrl">영상 공유 링크</label>
         <input id="videoUrl" type="url" placeholder="https://naver.me/..." autocomplete="off">
-        <label for="videoTitle">제목</label>
+        <label for="videoTitle">제목 <span class="admin-optional">(비우면 영상 제목)</span></label>
         <input id="videoTitle" type="text" maxlength="200" autocomplete="off">
         <label for="videoDate">날짜 <span class="admin-optional">(선택)</span></label>
         <input id="videoDate" type="date">
@@ -860,6 +861,7 @@ INDEX_HTML = """<!doctype html>
           <button class="admin-submit" type="submit">변경</button>
         </div>
       </form>
+      </div>
 
       <p class="admin-message" id="adminMessage" aria-live="polite"></p>
     </div>
@@ -2126,12 +2128,29 @@ body:not(.locked) .passcode-screen {
 }
 
 .admin-panel {
+  display: flex;
+  flex-direction: column;
   width: min(420px, 100%);
-  max-height: calc(100vh - 32px);
-  overflow-y: auto;
+  /* 100vh 는 모바일 브라우저 주소창 높이를 빼 주지 않는다. dvh 를 쓰면
+     주소창이 접히든 펼쳐지든 실제로 보이는 높이에 맞는다. */
+  max-height: calc(100dvh - 32px);
   background: var(--surface);
   border-radius: 16px;
   box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+/* 제목과 메시지는 고정이고 폼만 스크롤한다. 비번 변경 칸을 펼치면 내용이
+   화면보다 길어지는데, 통째로 스크롤시키면 제목이 위로 밀려 잘리고
+   결과 메시지는 아래로 밀려 안 보인다 — 바꿨는지 아닌지 알 수가 없게 된다. */
+.admin-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.admin-head {
+  flex: none;
 }
 
 .admin-head {
@@ -2247,10 +2266,17 @@ body:not(.locked) .passcode-screen {
 }
 
 .admin-message {
-  margin: 10px 18px 16px;
+  flex: none;
+  margin: 0;
+  padding: 12px 18px 16px;
   min-height: 18px;
   font-size: 13px;
   color: var(--muted);
+}
+
+/* 할 말이 있을 때만 선을 긋는다. 빈 줄에 경계선만 떠 있으면 어색하다. */
+.admin-message:not(:empty) {
+  border-top: 1px solid var(--line);
 }
 
 .admin-message.is-error {
@@ -2352,6 +2378,17 @@ body.modal-open {
 }
 
 @media (max-width: 640px) {
+  .admin-modal {
+    padding: 0;
+  }
+
+  .admin-panel {
+    width: 100%;
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
+  }
+
   .video-modal {
     padding: 0;
   }
@@ -3958,8 +3995,8 @@ APP_JS = """(() => {
       title: videoTitle.value.trim(),
       date: videoDate.value,
     };
-    if (!payload.url || !payload.title) {
-      setAdminMessage("링크와 제목은 필수입니다.", true);
+    if (!payload.url) {
+      setAdminMessage("영상 링크를 입력해주세요.", true);
       return;
     }
 
@@ -4261,7 +4298,13 @@ APP_JS = """(() => {
     const open = adminPasscodeFields.hidden;
     adminPasscodeFields.hidden = !open;
     adminPasscodeToggle.setAttribute("aria-expanded", String(open));
-    if (open) currentPasscode.focus(); else clearPasscodeFields();
+    if (!open) {
+      clearPasscodeFields();
+      return;
+    }
+    // 펼쳐진 칸이 화면 밖에 생기면 아무 일도 안 일어난 것처럼 보인다.
+    adminPasscodeFields.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    currentPasscode.focus({ preventScroll: true });
   });
 
   videoModalClose.addEventListener("click", closeVideoModal);

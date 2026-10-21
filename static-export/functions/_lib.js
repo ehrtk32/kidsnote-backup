@@ -202,6 +202,74 @@ export function normalizeText(value, maxLength) {
   return String(value ?? "").trim().slice(0, maxLength);
 }
 
+const META_TAG = /<meta\b[^>]*>/gi;
+const META_ATTR = /(property|name|content)\s*=\s*"([^"]*)"|(property|name|content)\s*=\s*'([^']*)'/gi;
+const TITLE_TAG = /<title[^>]*>([\s\S]*?)<\/title>/i;
+
+function decodeEntities(text) {
+  return text
+    .replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&");
+}
+
+/**
+ * 공유 링크가 스스로 말하는 제목을 가져온다. 못 가져오면 null.
+ *
+ * 썸네일과 달리 이건 한 번만 읽어 D1 에 적어 두면 끝이다 — og:image 처럼
+ * 만료되는 토큰이 붙어 있지도, 매번 다시 긁어야 하지도 않는다. 그래서
+ * 제목만 이 방식을 쓴다.
+ *
+ * 남의 서버를 부르는 일이라 짧게 끊고, 실패는 호출부가 조용히 넘긴다.
+ */
+export async function fetchLinkTitle(url) {
+  let markup;
+  try {
+    const response = await fetch(url, {
+      headers: {
+        // 봇으로 보이면 메타태그 없는 페이지를 주는 곳이 있다.
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+          + "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36",
+        Accept: "text/html,application/xhtml+xml",
+      },
+      redirect: "follow",
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!response.ok) return null;
+    // 제목은 <head> 안에 있다. 영상 페이지 전체를 읽을 이유가 없다.
+    markup = (await response.text()).slice(0, 200_000);
+  } catch {
+    return null;
+  }
+
+  for (const tag of markup.match(META_TAG) || []) {
+    const attrs = {};
+    for (const m of tag.matchAll(META_ATTR)) {
+      const key = (m[1] || m[3] || "").toLowerCase();
+      if (key) attrs[key] = m[2] ?? m[4] ?? "";
+    }
+    const key = (attrs.property || attrs.name || "").toLowerCase();
+    if ((key === "og:title" || key === "twitter:title") && attrs.content) {
+      const value = decodeEntities(attrs.content).trim();
+      if (value) return value;
+    }
+  }
+
+  const title = markup.match(TITLE_TAG)?.[1];
+  return title ? decodeEntities(title).trim() || null : null;
+}
+
+/** 제목을 전혀 못 구했을 때 URL 에서 읽을 만한 조각을 뽑는다. */
+export function titleFromUrl(url) {
+  try {
+    const parsed = new URL(url);
+    const last = parsed.pathname.split("/").filter(Boolean).pop();
+    return decodeURIComponent(last || "") || parsed.hostname;
+  } catch {
+    return "영상";
+  }
+}
+
 /**
  * URL 로부터 안정적인 id.
  *
