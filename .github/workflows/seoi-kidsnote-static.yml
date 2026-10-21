@@ -64,6 +64,15 @@ jobs:
           fi
           python static-export/export_static_site.py "${ARGS[@]}"
 
+      # limit 을 준 export 는 글 몇 개짜리 dist/ 를 만든다. 그대로 배포하면
+      # 라이브 사이트가 그 몇 개로 줄어든다. deploy 기본값이 on 이라
+      # "테스트로 limit 만 넣고 돌렸다"가 바로 이 사고가 된다.
+      - name: Refuse to deploy a limited export
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.limit != '' && inputs.deploy == 'on' }}
+        run: |
+          echo "::error::limit 을 준 export 는 배포할 수 없습니다. deploy 를 off 로 두고 다시 실행하세요."
+          exit 1
+
       - name: Check Cloudflare Pages limits
         run: |
           python - <<'PY'

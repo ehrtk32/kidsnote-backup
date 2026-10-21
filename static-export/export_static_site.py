@@ -18,6 +18,8 @@ from typing import Any
 from urllib.parse import urlparse
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 
 NOTION_API = "https://api.notion.com/v1"
@@ -194,10 +196,34 @@ class NotionPage:
     url: str
 
 
+def build_retrying_session() -> requests.Session:
+    """429 와 일시적인 5xx 에 물러섰다 다시 시도하는 Session.
+
+    export 한 번은 글 수 × (페이지 쿼리 + 블록 children + 중첩 children) 이라
+    수천 번의 호출이 된다. 재시도가 없으면 그중 한 번의 429 가 export 전체를
+    죽이고 배포까지 막는다. 같은 저장소의 notion_mirror.py 가 이미 같은
+    이유로 같은 설정을 쓰고 있다.
+    """
+    session = requests.Session()
+    retry = Retry(
+        total=5,
+        backoff_factor=1.0,  # 0s, 1s, 2s, 4s, 8s
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset({"GET", "POST", "PATCH"}),
+        # Notion 이 Retry-After 를 주면 그만큼 기다린다.
+        respect_retry_after_header=True,
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
 class NotionClient:
     def __init__(self, token: str, database_id: str) -> None:
         self.database_id = database_id.replace("-", "")
-        self.session = requests.Session()
+        self.session = build_retrying_session()
         self.session.headers.update({
             "Authorization": f"Bearer {token}",
             "Notion-Version": NOTION_VERSION,
@@ -313,7 +339,8 @@ class StaticRenderer:
         self.notion = notion
         self.out_dir = out_dir
         self.download_media = download_media
-        self.session = requests.Session()
+        # 미디어도 수천 건이라 같은 이유로 재시도가 필요하다.
+        self.session = build_retrying_session()
         self.media_indexes: dict[str, int] = {}
         self.first_image_url = ""
         self.missing_media: list[str] = []
@@ -660,7 +687,15 @@ def main() -> int:
     )
     write_post_routes(out_dir, posts, index_html)
 
-    pruned_media_count = prune_unused_media(out_dir, renderer.used_media_paths)
+    # --limit 을 준 실행은 일부 글만 렌더하므로 used_media_paths 에 그 글들의
+    # 미디어만 담긴다. 그대로 prune 하면 나머지 수 GB 를 전부 지운다 — CI 는
+    # 어차피 빈 dist/ 로 시작해 무해하지만, 로컬에서는 CLAUDE.md 가 권하는
+    # `--limit 5` 미리보기가 캐시를 통째로 날리는 결과가 된다.
+    if args.limit is None:
+        pruned_media_count = prune_unused_media(out_dir, renderer.used_media_paths)
+    else:
+        pruned_media_count = 0
+        print("--limit 실행이므로 미디어 정리를 건너뜁니다.", flush=True)
     stats = file_stats(out_dir)
     report = {
         "out_dir": str(out_dir),

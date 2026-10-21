@@ -207,16 +207,29 @@ jobs:
           DISABLE_MILESTONES: ${{ (secrets.MILESTONES || vars.MILESTONES) == 'off' && 'true' || 'false' }}
           DISABLE_INTERESTS: ${{ (secrets.INTERESTS || vars.INTERESTS) == 'off' && 'true' || 'false' }}
           DISABLE_TEACHER_THANKS: ${{ (secrets.TEACHER_THANKS || vars.TEACHER_THANKS) == 'off' && 'true' || 'false' }}
+          # 입력은 env 로 받아 쉘 본문에는 ${{ }} 를 두지 않는다. 보간은
+          # 스크립트가 파싱되기 전에 일어나므로, 자유 입력인 limit 에
+          # `"; curl ... #` 같은 값이 들어오면 그대로 실행된다. 바로 옆
+          # seoi-kidsnote-static.yml 이 쓰는 방식과 같다.
+          INPUT_LIMIT: ${{ inputs.limit }}
+          INPUT_MONTHLY_SAMPLE: ${{ inputs.monthly_sample }}
+          INPUT_FORCE_REFRESH: ${{ inputs.force_refresh }}
         run: |
           set -eu
           ARGS=( "--auth-mode" "session-cookie-env" "--publish-to-notion" "--no-local-save" )
-          if [ -n "${{ inputs.limit }}" ]; then
-            ARGS+=( "--limit" "${{ inputs.limit }}" )
+          if [ -n "${INPUT_LIMIT:-}" ]; then
+            case "${INPUT_LIMIT}" in
+              ''|*[!0-9]*)
+                echo "::error::limit 은 숫자여야 합니다: ${INPUT_LIMIT}"
+                exit 1
+                ;;
+            esac
+            ARGS+=( "--limit" "${INPUT_LIMIT}" )
           fi
-          if [ "${{ inputs.monthly_sample }}" = "on" ]; then
+          if [ "${INPUT_MONTHLY_SAMPLE:-}" = "on" ]; then
             ARGS+=( "--monthly-sample" )
           fi
-          if [ "${{ inputs.force_refresh }}" = "on" ]; then
+          if [ "${INPUT_FORCE_REFRESH:-}" = "on" ]; then
             ARGS+=( "--force-refresh" )
           fi
           python tools/kidsnote_fetch/fetch.py "${ARGS[@]}"

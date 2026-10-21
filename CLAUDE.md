@@ -81,7 +81,14 @@ gh run list -R ehrtk32/kidsnote-backup -L 5
 (`https://seoi-kidsnote.pages.dev/data/posts.json`) 이상인지 확인한다.
 
 **`--clean` 주의.** `dist/`의 `wp-content/`는 미디어 캐시로 재사용된다(`find_cached_media`).
-덕분에 전체 재-export도 ~4분이면 끝나지만, `--clean`을 주면 4GB를 전부 다시 내려받는다.
+덕분에 전체 재-export도 ~4분이면 끝나지만, `--clean`을 주면 5.4GB를 전부 다시 내려받는다.
+`--limit`은 안전하다 — 일부만 렌더한 실행은 미디어 정리를 건너뛴다(예전엔 안 그랬고, 그래서
+`--limit 5` 미리보기가 캐시를 통째로 날렸다).
+
+**CI에는 미디어 캐시가 없다.** `dist/`가 gitignore 대상이고 워크플로에 `actions/cache`도
+없어서, 매 실행이 빈 `dist/`로 시작해 5.4GB를 다시 받는다. 그래서 새 글이 2건인 날도
+export가 30~40분 걸린다. 금전 비용은 0(public repo)이고 깨지는 것도 없어서 의도적으로
+두고 있다 — 고칠 거면 GitHub Actions 캐시 10GB 한도가 언젠가 조용히 터진다는 점을 감안할 것.
 
 **Pages Functions는 `static-export/`에서 배포해야 한다.** wrangler는 `functions/`와
 `wrangler.jsonc`를 **작업 디렉터리 기준**으로 찾는다. 넘겨주는 asset 디렉터리와는 무관하다.
@@ -115,6 +122,10 @@ npx wrangler pages dev --port 9600 --d1 DB=f3c5379c-7d6b-4bb4-9d42-e5d037b80eed
 한다(`wrangler pages secret put ADMIN_PASSCODE --project-name seoi-kidsnote [--env preview]`).
 사이트 입구의 가족 패스코드와 달리 이건 Function이 서버에서 대조하므로 실제로 막힌다.
 6자리 숫자라 `auth_attempts` 테이블로 IP당 5회 실패 시 15분 차단한다.
+
+**공개 저장소에 실제 아이 사진·이름을 올리지 말 것.** README 스크린샷에 아이 실명·반 이름·
+예방접종 이력이, 쿠키 안내 스크린샷에 `sessionid` 값 일부가 들어가 있었다(2026-10-21 제거·마스킹).
+다시 캡처할 일이 있으면 가명 계정을 쓰거나 값을 가린 뒤 올린다.
 
 **Notion 스키마 의존.** `resolve_schema()`가 property를 이름으로 찾는다 —
 `REPORT_ID_CANDIDATES`(현 DB에서는 `번호`)와 `DATE_CANDIDATES`(`날짜`). 이 두 property를
