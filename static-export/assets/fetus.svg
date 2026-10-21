@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="태아 일러스트">
+  <!-- 태명이 "살구"라 배경을 살구색으로 뒀다. 사이트의 초록 액센트와 겹치지
+       않아서 사이드바에서 서이 사진과 나란히 놓아도 서로 구분된다. -->
+  <circle cx="48" cy="48" r="48" fill="#fbe7d6"/>
+  <circle cx="48" cy="52" r="36" fill="#f4cfaf" opacity=".5"/>
+  <!-- 몸은 호 두 개다. 위쪽(가슴·등)이 두껍고 아래쪽(접은 다리)이 가늘어야
+       웅크린 자세로 읽힌다. 같은 굵기로 그리면 그냥 고리가 된다. -->
+  <g stroke-linecap="round" fill="none" stroke="#d2834f">
+    <path d="M49.9 36.7A19 19 0 0 1 46.7 73.9" stroke-width="18"/>
+    <path d="M46.7 73.9A19 19 0 0 1 26.3 51.7" stroke-width="11.5"/>
+  </g>
+  <!-- 머리는 실제 태아 비율대로 크게. 작게 그리면 새우처럼 보인다. -->
+  <circle cx="57" cy="30" r="17" fill="#e09a6b"/>
+</svg>

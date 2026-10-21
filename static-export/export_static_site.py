@@ -1140,6 +1140,22 @@ body:not(.locked) .passcode-screen {
   transform-origin: 35% 42%;
 }
 
+/* 위의 scale 은 서이 사진에서 얼굴만 남기려고 맞춘 크롭이다. 일러스트는
+   원형에 꽉 차게 그려져 있어서 그대로 두면 배만 확대된다. */
+.profile-photo.is-illustration img {
+  transform: none;
+  object-fit: contain;
+}
+
+/* 크게 열 게 없으니 확대 커서도 쓰지 않는다. 플레이스홀더와 같은 이유다. */
+.profile-photo.is-illustration {
+  cursor: default;
+}
+
+.profile-photo.is-illustration:hover {
+  transform: none;
+}
+
 .profile-copy h1 {
   margin: 0;
   font-size: 20px;
@@ -2857,7 +2873,10 @@ APP_JS = """(() => {
   // 지금 부르는 "살구"는 태명이라 출생 후 바뀐다. 이름이 바뀌면 아래 `name`
   // 과 `roman` 만 고치면 되고, 저장된 데이터는 그대로 따라온다.
   //
-  // `birth` 가 비면 D+ 카운터를 숨긴다. 생년월일이 생기면 여기 넣으면 켜진다.
+  // 프로필 아래 줄은 `birth` 와 `lmp` 중 있는 쪽을 쓴다. `birth` 가 이긴다 —
+  // 태어나고 나면 주수가 아니라 D+ 를 봐야 하므로, 출생일을 넣는 순간 저절로
+  // 넘어간다. `lmp` 는 그때 지워도 되고 남겨 둬도 된다.
+  //
   // `photo` 가 비면 이름 첫 글자 플레이스홀더를 쓴다.
   const children = [
     {
@@ -2872,7 +2891,12 @@ APP_JS = """(() => {
       name: "살구",
       roman: "Salgu's Kidsnote",
       birth: "",
-      photo: "",
+      // 임신 0주 0일로 잡은 날. 2026-10-21 이 12주 0일이라는 것만 알고 84일을
+      // 거꾸로 센 값이다. 병원에서 주수를 다시 잡아 주면 이 날짜만 옮기면
+      // 되고, 출산예정일도 여기서 따라 나온다(+280일 = 2027-05-05).
+      lmp: "2026-07-29",
+      photo: "/assets/fetus.svg",
+      illustration: true,
     },
   ];
   const DEFAULT_CHILD = "seoi";
@@ -3061,7 +3085,9 @@ APP_JS = """(() => {
   const activeChild = () =>
     children.find((child) => child.key === state.activeChild) || children[0];
 
-  function daysSinceBirth(birth) {
+  // 보는 사람의 시계가 어디에 있든 서울 날짜로 센다. 시각은 버리고 날짜만
+  // 남겨 UTC 자정으로 돌려주므로, 빼면 바로 일수가 된다.
+  function seoulToday() {
     const parts = new Intl.DateTimeFormat("en-US", {
       timeZone: "Asia/Seoul",
       year: "numeric",
@@ -3071,10 +3097,29 @@ APP_JS = """(() => {
       acc[part.type] = Number(part.value);
       return acc;
     }, {});
-    const [year, month, day] = birth.split("-").map(Number);
-    const today = Date.UTC(parts.year, parts.month - 1, parts.day);
-    const birthday = Date.UTC(year, month - 1, day);
-    return Math.floor((today - birthday) / 86400000) + 1;
+    return Date.UTC(parts.year, parts.month - 1, parts.day);
+  }
+
+  function daysSince(isoDate) {
+    const [year, month, day] = isoDate.split("-").map(Number);
+    return Math.round((seoulToday() - Date.UTC(year, month - 1, day)) / 86400000);
+  }
+
+  const daysSinceBirth = (birth) => daysSince(birth) + 1;
+
+  // 임신 주수. 이걸 export 시점에 박아 두면 배치가 하루 걸른 날 주차가
+  // 멈추므로, 화면을 열 때마다 브라우저가 다시 센다.
+  function gestation(lmp) {
+    const days = daysSince(lmp);
+    if (days < 0) return null;
+    return { weeks: Math.floor(days / 7), days: days % 7 };
+  }
+
+  // 출산예정일은 통상 lmp + 280일이다. 따로 적어 두면 주수와 어긋날 수
+  // 있으니 기준일 하나에서 뽑는다.
+  function dueDate(lmp) {
+    const [year, month, day] = lmp.split("-").map(Number);
+    return new Date(Date.UTC(year, month - 1, day + 280)).toISOString().slice(0, 10);
   }
 
   function renderProfile() {
@@ -3089,6 +3134,7 @@ APP_JS = """(() => {
       profilePhoto.hidden = false;
       profilePhoto.setAttribute("aria-label", `${child.name} 사진 크게 보기`);
       profilePhoto.classList.remove("is-placeholder");
+      profilePhoto.classList.toggle("is-illustration", Boolean(child.illustration));
       profilePhoto.textContent = "";
       profilePhoto.replaceChildren(profileImage);
     } else {
@@ -3096,6 +3142,7 @@ APP_JS = """(() => {
       // 없으므로 버튼이지만 비활성으로 둔다.
       profilePhoto.hidden = false;
       profilePhoto.classList.add("is-placeholder");
+      profilePhoto.classList.remove("is-illustration");
       profilePhoto.removeAttribute("aria-label");
       profilePhoto.replaceChildren(document.createTextNode(child.name.slice(0, 1)));
     }
@@ -3106,6 +3153,14 @@ APP_JS = """(() => {
         `<time datetime="${escapeHtml(child.birth)}">${escapeHtml(child.birth.replaceAll("-", "."))}</time>`
         + '<span aria-hidden="true">·</span>'
         + `<strong>D+${Math.max(1, days)}</strong>`;
+    } else if (child.lmp) {
+      const term = gestation(child.lmp);
+      const due = dueDate(child.lmp);
+      profileMeta.innerHTML = term
+        ? `<time datetime="${escapeHtml(due)}">${escapeHtml(due.replaceAll("-", "."))} 예정</time>`
+          + '<span aria-hidden="true">·</span>'
+          + `<strong>${term.weeks}주 ${term.days}일</strong>`
+        : "";
     } else {
       profileMeta.textContent = "";
     }
@@ -4660,7 +4715,9 @@ APP_JS = """(() => {
 
   profilePhoto.addEventListener("click", () => {
     const child = activeChild();
-    if (!child.photo) return;
+    // 일러스트는 라이트박스로 열지 않는다. 크게 봐도 더 보이는 게 없고,
+    // 라이트박스에는 다운로드 버튼이 달려 있어 더 어색하다.
+    if (!child.photo || child.illustration) return;
     showLightbox(0, [{ src: child.photo, alt: child.name, caption: child.name }]);
   });
 
