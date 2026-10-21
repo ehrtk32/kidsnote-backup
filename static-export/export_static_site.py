@@ -69,14 +69,17 @@ CHILD_KEYS = ("seoi", "second")
 # hardcoded video breaks at once with no signal beyond "it stopped working".
 # The share link stays valid, so we frame it instead. The cost is that the
 # modal shows the host's player chrome rather than ours.
-EXTERNAL_VIDEOS: list[dict[str, str]] = [
-    {
-        "url": "https://naver.me/5XcEcByZ",
-        "title": "서이가 태어난 날",
-        "date": "2025-03-04",
-        "child": "seoi",
-    },
-]
+#   child  optional, "seoi" or "second". Defaults to DEFAULT_CHILD.
+#
+# Shape of an entry:
+#
+#     {
+#         "url": "https://naver.me/XXXXXXXX",
+#         "title": "서이가 태어난 날",
+#         "date": "2025-03-04",
+#         "child": "seoi",
+#     }
+EXTERNAL_VIDEOS: list[dict[str, str]] = []
 
 # og:image URLs are signed too, so the thumbnail is downloaded at export time
 # and served from our own origin. Cached across runs like the Notion media.
