@@ -31,6 +31,74 @@ REPORT_ID_CANDIDATES = (
 )
 DATE_CANDIDATES = ("Date", "날짜")
 
+# ---------------------------------------------------------------------------
+# Children
+# ---------------------------------------------------------------------------
+# Every post this export produces belongs to one child. Today there is exactly
+# one Notion database (서이's), so everything is tagged with that key and the
+# 살구 tab renders empty until there is data for them.
+#
+# EXTENSION POINT — when the second child gets their own Kidsnote account and
+# Notion DB: read a second NOTION_DATABASE_ID_2 here, query it with the same
+# NotionClient, and tag its pages "second". The frontend already filters on
+# this field, so nothing there needs to change.
+#
+# KEYS ARE PERMANENT. "second" is deliberately not a name: that child is
+# currently known by a 태명 (prenatal nickname) that changes once they are
+# born and named. The key ends up in every D1 row's `child` column, so
+# renaming it later orphans all their videos, comments and likes. Only the
+# display name in APP_JS's `children` changes at that point — never this.
+DEFAULT_CHILD = "seoi"
+CHILD_KEYS = ("seoi", "second")
+
+# ---------------------------------------------------------------------------
+# External videos
+# ---------------------------------------------------------------------------
+# Videos too large for Notion's 5 MiB free-tier cap live in external storage
+# (Naver MYBOX etc). Add the share link here and it shows up under the 영상
+# tab as a thumbnail card that opens the host's own player in a modal.
+#
+#   url    required. The share link, exactly as the host gave it.
+#   title  optional. Falls back to the page's og:title (usually the raw
+#          filename, e.g. "20250304_112212.mp4"), so set this for anything
+#          you want to read nicely.
+#   date   optional, "YYYY-MM-DD". Used for sorting and the card's date line.
+#
+# Why the link and not the direct media URL: MYBOX's playable URL carries an
+# `atoken` query param that eventually expires, and when it does every
+# hardcoded video breaks at once with no signal beyond "it stopped working".
+# The share link stays valid, so we frame it instead. The cost is that the
+# modal shows the host's player chrome rather than ours.
+#   child  optional, "seoi" or "second". Defaults to DEFAULT_CHILD.
+#
+# Shape of an entry:
+#
+#     {
+#         "url": "https://naver.me/XXXXXXXX",
+#         "title": "서이가 태어난 날",
+#         "date": "2025-03-04",
+#         "child": "seoi",
+#     }
+EXTERNAL_VIDEOS: list[dict[str, str]] = []
+
+# og:image URLs are signed too, so the thumbnail is downloaded at export time
+# and served from our own origin. Cached across runs like the Notion media.
+VIDEO_THUMB_DIR = "video-thumbs"
+VIDEO_BROWSER_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/125.0 Safari/537.36"
+)
+META_TAG_PATTERN = re.compile(r"<meta\b[^>]*>", re.IGNORECASE)
+META_ATTR_PATTERN = re.compile(
+    r'(property|name|content)\s*=\s*"([^"]*)"' r"|(property|name|content)\s*=\s*'([^']*)'",
+    re.IGNORECASE,
+)
+# MYBOX's og:image is a 200x200 square crop. Its thumbnailer also answers
+# `type=w800` with a 800x450 widescreen frame, which is what a card wants.
+# Only a short whitelist of sizes works (f640_640 and f960_960 both answer
+# 200 with an empty body), so anything unexpected falls back to the og URL.
+VIDEO_THUMB_SIZE_PARAM = "w800"
+
 
 def load_env_file(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
@@ -505,7 +573,11 @@ def clean_generated_data(out_dir: Path) -> None:
     for path in (out_dir / "data/posts", out_dir / "posts"):
         if path.exists():
             shutil.rmtree(path)
-    for path in (out_dir / "data/posts.json", out_dir / "export-report.json"):
+    for path in (
+        out_dir / "data/posts.json",
+        out_dir / "data/videos.json",
+        out_dir / "export-report.json",
+    ):
         if path.exists():
             path.unlink()
 
@@ -526,6 +598,157 @@ def prune_unused_media(out_dir: Path, used_media_paths: set[Path]) -> int:
             except OSError:
                 pass
     return deleted
+
+
+def parse_og_tags(markup: str) -> dict[str, str]:
+    """Pull og:title / og:image / og:description out of a page's markup.
+
+    Attribute order varies by host, so each <meta> tag is scanned for its
+    own property/content pair rather than assuming property comes first.
+    """
+    found: dict[str, str] = {}
+    for tag in META_TAG_PATTERN.findall(markup):
+        attrs: dict[str, str] = {}
+        for match in META_ATTR_PATTERN.finditer(tag):
+            key = (match.group(1) or match.group(3) or "").lower()
+            value = match.group(2) if match.group(2) is not None else match.group(4)
+            if key:
+                attrs[key] = value or ""
+        key = (attrs.get("property") or attrs.get("name") or "").lower()
+        if key.startswith("og:") and "content" in attrs:
+            found.setdefault(key[3:], html.unescape(attrs["content"]))
+    return found
+
+
+def video_slug(url: str) -> str:
+    """Stable filename stem for a share link, so thumbnails cache across runs."""
+    return "video-" + hashlib.sha256(url.encode("utf-8")).hexdigest()[:12]
+
+
+def widescreen_thumb_url(url: str) -> str:
+    """Swap a MYBOX thumbnail's size param for the widescreen variant."""
+    if "type=" not in url:
+        return url
+    return re.sub(r"(?<=[?&])type=[^&]*", f"type={VIDEO_THUMB_SIZE_PARAM}", url)
+
+
+def download_video_thumb(
+    session: requests.Session, thumb_url: str, target_stem: Path
+) -> Path | None:
+    """Save a video's poster next to the site, returning the written path.
+
+    Both the widescreen and the original og:image URL are tried: the size
+    whitelist is undocumented, and a rejected size answers 200 with an empty
+    body rather than an error status.
+    """
+    cached = sorted(target_stem.parent.glob(f"{target_stem.name}.*"))
+    if cached:
+        return cached[0]
+    candidates = [widescreen_thumb_url(thumb_url)]
+    if candidates[0] != thumb_url:
+        candidates.append(thumb_url)
+    for candidate in candidates:
+        try:
+            response = session.get(
+                candidate, timeout=60, headers={"User-Agent": VIDEO_BROWSER_UA}
+            )
+            response.raise_for_status()
+        except Exception:
+            continue
+        content_type = response.headers.get("Content-Type") or ""
+        if not response.content or not content_type.startswith("image/"):
+            continue
+        target = target_stem.with_name(
+            target_stem.name + infer_extension(content_type, candidate)
+        )
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(response.content)
+        return target
+    return None
+
+
+def export_videos(
+    out_dir: Path, download_media: bool
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Resolve every EXTERNAL_VIDEOS entry into a card the site can render.
+
+    Failures are returned rather than raised: a video host being slow must
+    not take down a deploy of 400 alimnotas. They are reported separately
+    from `missing_media` for the same reason — the workflow treats a missing
+    Notion media file as a hard stop, and a poster image is not that.
+    """
+    if not EXTERNAL_VIDEOS:
+        return [], []
+
+    session = requests.Session()
+    thumb_dir = out_dir / VIDEO_THUMB_DIR
+    videos: list[dict[str, Any]] = []
+    failures: list[str] = []
+    used_thumbs: set[Path] = set()
+
+    for index, entry in enumerate(EXTERNAL_VIDEOS, start=1):
+        url = (entry.get("url") or "").strip()
+        if not url:
+            failures.append(f"entry #{index}: no url")
+            continue
+        print(f"[video {index}/{len(EXTERNAL_VIDEOS)}] {url}", flush=True)
+
+        og: dict[str, str] = {}
+        if download_media:
+            try:
+                response = session.get(
+                    url, timeout=60, headers={"User-Agent": VIDEO_BROWSER_UA}
+                )
+                response.raise_for_status()
+                og = parse_og_tags(response.text)
+            except Exception as exc:
+                failures.append(f"{url}: metadata fetch failed ({exc})")
+
+        thumbnail_url = ""
+        if og.get("image"):
+            saved = download_video_thumb(
+                session, og["image"], thumb_dir / video_slug(url)
+            )
+            if saved:
+                used_thumbs.add(saved.resolve())
+                thumbnail_url = "/" + saved.relative_to(out_dir).as_posix()
+            else:
+                failures.append(f"{url}: thumbnail download failed")
+        else:
+            cached = sorted(thumb_dir.glob(f"{video_slug(url)}.*"))
+            if cached:
+                used_thumbs.add(cached[0].resolve())
+                thumbnail_url = "/" + cached[0].relative_to(out_dir).as_posix()
+
+        raw_date = (entry.get("date") or "").strip()
+        child = (entry.get("child") or DEFAULT_CHILD).strip()
+        if child not in CHILD_KEYS:
+            failures.append(f"{url}: unknown child {child!r}, falling back to {DEFAULT_CHILD}")
+            child = DEFAULT_CHILD
+        videos.append({
+            "id": video_slug(url),
+            "child": child,
+            "url": url,
+            "title": (entry.get("title") or og.get("title") or "영상").strip(),
+            # Same "YYYY.MM.DD" shape the posts use, so the shared month
+            # filter and search treat a video like any other entry.
+            "date": display_date(raw_date),
+            "sort_key": raw_date,
+            # og:description is deliberately not a fallback: hosts put share
+            # boilerplate there ("X님이 공유한 동영상을 확인하세요"), which is
+            # noise on the card and leaks the uploader's account nickname.
+            "summary": (entry.get("summary") or "").strip(),
+            "thumbnail_url": thumbnail_url,
+        })
+
+    # Drop posters for links that are no longer listed.
+    if thumb_dir.exists():
+        for path in thumb_dir.iterdir():
+            if path.is_file() and path.resolve() not in used_thumbs:
+                path.unlink()
+
+    videos.sort(key=lambda video: (video["sort_key"] or "", video["title"]), reverse=True)
+    return videos, failures
 
 
 def file_stats(out_dir: Path) -> dict[str, Any]:
@@ -576,6 +799,7 @@ def main() -> int:
         ptype = post_type(page.title)
         summary = {
             "id": page.report_id,
+            "child": DEFAULT_CHILD,
             "title": page.title,
             "date": display_date(page.date),
             "type": ptype,
@@ -604,6 +828,16 @@ def main() -> int:
     write_text(out_dir / "data/posts.json", json.dumps(manifest, ensure_ascii=False, separators=(",", ":")))
     write_post_routes(out_dir, posts, index_html)
 
+    videos, video_failures = export_videos(out_dir, download_media=not args.skip_media)
+    write_text(
+        out_dir / "data/videos.json",
+        json.dumps(
+            {"count": len(videos), "videos": videos},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+    )
+
     pruned_media_count = prune_unused_media(out_dir, renderer.used_media_paths)
     stats = file_stats(out_dir)
     report = {
@@ -611,6 +845,12 @@ def main() -> int:
         "missing_media_count": len(renderer.missing_media),
         "missing_media": renderer.missing_media[:50],
         "pruned_media_count": pruned_media_count,
+        # Deliberately separate from missing_media: the deploy gate treats a
+        # missing Notion file as fatal, and a video poster is not worth
+        # blocking 400 alimnotas over.
+        "video_count": len(videos),
+        "video_issue_count": len(video_failures),
+        "video_issues": video_failures[:20],
         **stats,
     }
     write_text(out_dir / "export-report.json", json.dumps(report, ensure_ascii=False, indent=2))
@@ -625,7 +865,7 @@ INDEX_HTML = """<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>서이의 키즈노트</title>
+  <title>키즈노트</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23548a62'/%3E%3Cpath fill='white' d='M32 52S10 39.5 10 24.5C10 16.8 15.8 12 22.2 12c4.2 0 7.6 2.1 9.8 5.5C34.2 14.1 37.6 12 41.8 12C48.2 12 54 16.8 54 24.5C54 39.5 32 52 32 52z'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="__STYLES_HREF__">
 </head>
@@ -633,7 +873,7 @@ INDEX_HTML = """<!doctype html>
   <section class="passcode-screen" id="passcodeScreen">
     <form class="passcode-card" id="passcodeForm" autocomplete="off">
       <div class="passcode-mark" aria-hidden="true">♥</div>
-      <h1>서이의 키즈노트</h1>
+      <h1>우리 아이 키즈노트</h1>
       <label class="passcode-label" for="passcodeInput">가족 패스코드</label>
       <input id="passcodeInput" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="6자리">
       <p class="passcode-hint">아기생년월일 (6자리)</p>
@@ -645,24 +885,25 @@ INDEX_HTML = """<!doctype html>
   <div class="app-shell" id="appShell" aria-hidden="true">
     <aside class="sidebar">
       <header class="sidebar-header">
-        <div class="sidebar-brand" aria-label="서이의 키즈노트">
+        <div class="sidebar-brand" id="sidebarBrand">
           <span class="sidebar-brand-mark" aria-hidden="true">♥</span>
           <span class="sidebar-brand-copy">
-            <strong><span>서이</span>의 키즈노트</strong>
-            <small>Seoi's Kidsnote</small>
+            <strong><span id="brandName"></span>의 키즈노트</strong>
+            <small id="brandRoman"></small>
           </span>
         </div>
       </header>
-      <section class="profile" aria-label="서이 프로필">
-        <button class="profile-photo" id="profilePhoto" type="button" aria-label="서이 사진 크게 보기">
-          <img src="/assets/seoi-profile.jpg" alt="서이">
+      <section class="profile" id="profile">
+        <button class="profile-photo" id="profilePhoto" type="button">
+          <img id="profileImage" src="" alt="">
         </button>
         <div class="profile-copy">
-          <h1>서이</h1>
-          <p><time datetime="2025-03-04">2025.03.04</time><span aria-hidden="true">·</span><strong id="babyDays">D+</strong></p>
+          <h1 id="profileName"></h1>
+          <p class="profile-meta" id="profileMeta"></p>
         </div>
+        <div class="child-switch" id="childSwitch" role="group" aria-label="자녀 전환"></div>
       </section>
-      <nav class="tabs" id="tabs" aria-label="서이의 키즈노트 메뉴"></nav>
+      <nav class="tabs" id="tabs" aria-label="키즈노트 메뉴"></nav>
       <footer class="sidebar-footer">
         <div class="sync-meta" id="syncMeta">동기화 확인 중</div>
       </footer>
@@ -671,7 +912,7 @@ INDEX_HTML = """<!doctype html>
     <main class="workspace">
       <header class="content-header">
         <div>
-          <p class="content-eyebrow" id="pageEyebrow">서이의 새로운 기록</p>
+          <p class="content-eyebrow" id="pageEyebrow"></p>
           <h2 class="content-title" id="pageTitle">홈</h2>
         </div>
         <button class="filter-toggle-button" id="filterToggle" type="button" aria-expanded="false" aria-controls="filterTools">필터 목록 열기</button>
@@ -724,6 +965,18 @@ INDEX_HTML = """<!doctype html>
     </figure>
     <button class="lightbox-nav lightbox-next" type="button" aria-label="다음 사진">&#8250;</button>
   </div>
+  <div class="video-modal" id="videoModal" hidden role="dialog" aria-modal="true" aria-labelledby="videoModalTitle">
+    <div class="video-modal-panel">
+      <header class="video-modal-head">
+        <h3 id="videoModalTitle"></h3>
+        <button class="video-modal-close" type="button" aria-label="닫기">&times;</button>
+      </header>
+      <div class="video-modal-frame" id="videoModalFrame"></div>
+      <footer class="video-modal-foot">
+        <a id="videoModalLink" href="#" target="_blank" rel="noopener noreferrer">새 창에서 열기 ↗</a>
+      </footer>
+    </div>
+  </div>
   <script src="__APP_SRC__"></script>
 </body>
 </html>
@@ -742,6 +995,7 @@ STYLES_CSS = """:root {
   --accent-strong: #165341;
   --accent-soft: #e6f2ed;
   --album: #b45f2a;
+  --video: #6a4b9c;
   --notice: #37669c;
   --danger: #9b3434;
   --shadow: 0 16px 40px rgba(25, 32, 28, .08);
@@ -892,6 +1146,56 @@ body:not(.locked) .passcode-screen {
   align-content: center;
   gap: 14px;
   text-align: center;
+}
+
+/* 사진이 아직 없는 자녀. 버튼이지만 열 게 없으니 확대 커서를 쓰지 않는다. */
+.profile-photo.is-placeholder {
+  display: grid;
+  place-items: center;
+  font-size: 34px;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--accent-soft);
+  cursor: default;
+}
+
+.profile-photo.is-placeholder:hover {
+  transform: none;
+}
+
+.profile-meta:empty {
+  display: none;
+}
+
+.child-switch {
+  display: inline-flex;
+  padding: 3px;
+  gap: 3px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-soft);
+}
+
+.child-chip {
+  padding: 5px 16px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease;
+}
+
+.child-chip:hover {
+  color: var(--ink);
+}
+
+.child-chip[aria-pressed="true"] {
+  background: var(--surface);
+  color: var(--accent-strong);
+  box-shadow: 0 1px 3px rgba(32, 35, 31, .12);
 }
 
 .profile-photo {
@@ -1607,6 +1911,129 @@ body:not(.locked) .passcode-screen {
   display: none;
 }
 
+/* ---------- 영상 ---------- */
+/* 목록은 .entry 행을 재사용한다. 여기 있는 건 영상에만 필요한 차이뿐이다. */
+.entry-thumb-video {
+  color: var(--video);
+  font-size: 20px;
+  line-height: 1;
+}
+
+.badge.video {
+  background: var(--video);
+}
+
+/* ---------- 영상 모달 ---------- */
+body.modal-open {
+  overflow: hidden;
+}
+
+/* `display: grid` below outranks the UA stylesheet's [hidden] rule, so the
+   modal needs this or it renders on page load with an empty frame. */
+.video-modal[hidden] {
+  display: none;
+}
+
+.video-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(10, 12, 11, .88);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+
+.video-modal-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(960px, 100%);
+  max-height: calc(100vh - 32px);
+  background: var(--surface);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.video-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 10px 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.video-modal-head h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.video-modal-close {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--surface-soft);
+  color: var(--ink);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.video-modal-close:hover {
+  background: var(--line);
+}
+
+.video-modal-frame {
+  flex: 1;
+  min-height: 0;
+  aspect-ratio: 16 / 9;
+  background: #000;
+}
+
+.video-modal-frame iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+}
+
+.video-modal-foot {
+  padding: 10px 16px 12px;
+  border-top: 1px solid var(--line);
+}
+
+.video-modal-foot a {
+  font-size: 13px;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.video-modal-foot a:hover {
+  color: var(--video);
+  text-decoration: underline;
+}
+
+@media (max-width: 640px) {
+  .video-modal {
+    padding: 0;
+  }
+
+  .video-modal-panel {
+    width: 100%;
+    height: 100%;
+    max-height: 100vh;
+    border-radius: 0;
+  }
+
+  .video-modal-frame {
+    aspect-ratio: auto;
+  }
+}
+
 .lightbox {
   position: fixed;
   inset: 0;
@@ -1931,16 +2358,47 @@ APP_JS = """(() => {
   const PASSCODE_HASH = "ab1b686a59dab68ec51204e6ab55baa0e874902dc3e8ebe161832936d6f28ef2";
   const UNLOCK_KEY = "seoiKidsnoteUnlocked";
 
+  // 자녀 설정.
+  //
+  // `key` 는 절대 바꾸지 말 것. D1 의 videos / comments / likes 가 이 값으로
+  // 행을 묶는다. 둘째의 key 가 이름이 아니라 "second" 인 이유가 이것이다 —
+  // 지금 부르는 "살구"는 태명이라 출생 후 바뀐다. 이름이 바뀌면 아래 `name`
+  // 과 `roman` 만 고치면 되고, 저장된 데이터는 그대로 따라온다.
+  //
+  // `birth` 가 비면 D+ 카운터를 숨긴다. 생년월일이 생기면 여기 넣으면 켜진다.
+  // `photo` 가 비면 이름 첫 글자 플레이스홀더를 쓴다.
+  const children = [
+    {
+      key: "seoi",
+      name: "서이",
+      roman: "Seoi's Kidsnote",
+      birth: "2025-03-04",
+      photo: "/assets/seoi-profile.jpg",
+    },
+    {
+      key: "second",
+      name: "살구",
+      roman: "Salgu's Kidsnote",
+      birth: "",
+      photo: "",
+    },
+  ];
+  const DEFAULT_CHILD = "seoi";
+
   const tabs = [
     { key: "home", label: "홈", icon: "/assets/home.svg" },
     { key: "daily", label: "알림장", icon: "/assets/daily.svg" },
     { key: "album", label: "앨범", icon: "/assets/album.svg" },
     { key: "announcement", label: "공지", icon: "/assets/announcement.svg" },
+    { key: "video", label: "영상", icon: "/assets/video.svg" },
   ];
+  // Videos are not Notion posts: no detail route, no NEW pill, no month
+  // filter. The tab reuses the list panel but takes its items from a
+  // separate manifest, so every list path branches on this.
+  const VIDEO_TYPE = "video";
   const LIGHTBOX_MIN_ZOOM = 1;
   const LIGHTBOX_MAX_ZOOM = 4;
   const LIGHTBOX_ZOOM_STEP = 0.5;
-  const PROFILE_IMAGE_SRC = "/assets/seoi-profile.jpg";
 
   function postIdFromPath(pathname) {
     const match = String(pathname || "").match(/^\/posts\/(\d+)\/?$/);
@@ -1952,11 +2410,13 @@ APP_JS = """(() => {
   }
 
   const state = {
+    activeChild: window.localStorage.getItem("kidsnote.activeChild") || DEFAULT_CHILD,
     activeType: window.localStorage.getItem("kidsnote.activeType") || "home",
     activeMonth: window.localStorage.getItem("kidsnote.activeMonth") || "",
     query: "",
     allPosts: [],
     posts: [],
+    videos: [],
     counts: { daily: 0, album: 0, announcement: 0 },
     newCounts: { daily: 0, album: 0, announcement: 0 },
     recentDateKeys: recentDateKeys(),
@@ -1996,6 +2456,17 @@ APP_JS = """(() => {
   const lightboxDownload = document.querySelector(".lightbox-download");
   const lightboxPrev = document.querySelector(".lightbox-prev");
   const lightboxNext = document.querySelector(".lightbox-next");
+  const brandName = document.getElementById("brandName");
+  const brandRoman = document.getElementById("brandRoman");
+  const profileImage = document.getElementById("profileImage");
+  const profileName = document.getElementById("profileName");
+  const profileMeta = document.getElementById("profileMeta");
+  const childSwitch = document.getElementById("childSwitch");
+  const videoModal = document.getElementById("videoModal");
+  const videoModalTitle = document.getElementById("videoModalTitle");
+  const videoModalFrame = document.getElementById("videoModalFrame");
+  const videoModalLink = document.getElementById("videoModalLink");
+  const videoModalClose = document.querySelector(".video-modal-close");
   const appShell = document.getElementById("appShell");
   const profilePhoto = document.getElementById("profilePhoto");
   const babyDays = document.getElementById("babyDays");
@@ -2042,7 +2513,10 @@ APP_JS = """(() => {
     return new Set([koreaDateKey(now), koreaDateKey(yesterday)]);
   }
 
-  function renderBabyDays() {
+  const activeChild = () =>
+    children.find((child) => child.key === state.activeChild) || children[0];
+
+  function daysSinceBirth(birth) {
     const parts = new Intl.DateTimeFormat("en-US", {
       timeZone: "Asia/Seoul",
       year: "numeric",
@@ -2052,10 +2526,68 @@ APP_JS = """(() => {
       acc[part.type] = Number(part.value);
       return acc;
     }, {});
+    const [year, month, day] = birth.split("-").map(Number);
     const today = Date.UTC(parts.year, parts.month - 1, parts.day);
-    const birthday = Date.UTC(2025, 2, 4);
-    const days = Math.floor((today - birthday) / 86400000) + 1;
-    babyDays.textContent = `D+${Math.max(1, days)}`;
+    const birthday = Date.UTC(year, month - 1, day);
+    return Math.floor((today - birthday) / 86400000) + 1;
+  }
+
+  function renderProfile() {
+    const child = activeChild();
+    brandName.textContent = child.name;
+    brandRoman.textContent = child.roman;
+    profileName.textContent = child.name;
+
+    if (child.photo) {
+      profileImage.src = child.photo;
+      profileImage.alt = child.name;
+      profilePhoto.hidden = false;
+      profilePhoto.setAttribute("aria-label", `${child.name} 사진 크게 보기`);
+      profilePhoto.classList.remove("is-placeholder");
+      profilePhoto.textContent = "";
+      profilePhoto.replaceChildren(profileImage);
+    } else {
+      // 사진이 아직 없는 자녀는 이름 첫 글자를 쓴다. 라이트박스로 열 것도
+      // 없으므로 버튼이지만 비활성으로 둔다.
+      profilePhoto.hidden = false;
+      profilePhoto.classList.add("is-placeholder");
+      profilePhoto.removeAttribute("aria-label");
+      profilePhoto.replaceChildren(document.createTextNode(child.name.slice(0, 1)));
+    }
+
+    if (child.birth) {
+      const days = daysSinceBirth(child.birth);
+      profileMeta.innerHTML =
+        `<time datetime="${escapeHtml(child.birth)}">${escapeHtml(child.birth.replaceAll("-", "."))}</time>`
+        + '<span aria-hidden="true">·</span>'
+        + `<strong>D+${Math.max(1, days)}</strong>`;
+    } else {
+      profileMeta.textContent = "";
+    }
+  }
+
+  function renderChildSwitch() {
+    childSwitch.innerHTML = children.map((child) => (
+      `<button class="child-chip" type="button" data-child="${escapeHtml(child.key)}"`
+      + ` aria-pressed="${child.key === state.activeChild ? "true" : "false"}">`
+      + `${escapeHtml(child.name)}</button>`
+    )).join("");
+  }
+
+  function setActiveChild(key) {
+    if (!children.some((child) => child.key === key) || key === state.activeChild) return;
+    state.activeChild = key;
+    window.localStorage.setItem("kidsnote.activeChild", key);
+    renderProfile();
+    renderChildSwitch();
+    renderDocumentTitle();
+    recomputeCounts();
+    renderMonthOptions();
+    refreshView();
+  }
+
+  function renderDocumentTitle() {
+    document.title = `${activeChild().name}의 키즈노트`;
   }
 
   function isNewPost(post) {
@@ -2067,6 +2599,17 @@ APP_JS = """(() => {
       if (isNewPost(post)) counts[post.type] = (counts[post.type] || 0) + 1;
       return counts;
     }, { daily: 0, album: 0, announcement: 0 });
+  }
+
+  // 탭 카운트는 매니페스트의 전체 합계가 아니라 지금 보고 있는 자녀 기준으로
+  // 다시 센다. 자녀를 바꿀 때마다 호출된다.
+  function recomputeCounts() {
+    const posts = childPosts();
+    state.counts = posts.reduce((counts, post) => {
+      counts[post.type] = (counts[post.type] || 0) + 1;
+      return counts;
+    }, { daily: 0, album: 0, announcement: 0 });
+    state.newCounts = countNewPosts(posts);
   }
 
   async function sha256Hex(value) {
@@ -2149,7 +2692,7 @@ APP_JS = """(() => {
 
   function renderPageHeader() {
     if (state.selectedId !== null) {
-      pageEyebrow.textContent = "서이의 기록";
+      pageEyebrow.textContent = `${activeChild().name}의 기록`;
       pageTitle.textContent = activeLabel();
       return;
     }
@@ -2158,7 +2701,7 @@ APP_JS = """(() => {
       pageTitle.textContent = "홈";
       return;
     }
-    pageEyebrow.textContent = "서이의 기록 모아보기";
+    pageEyebrow.textContent = `${activeChild().name}의 기록 모아보기`;
     pageTitle.textContent = activeLabel();
   }
 
@@ -2169,7 +2712,11 @@ APP_JS = """(() => {
   }
 
   function renderMonthOptions() {
-    const months = [...new Set(state.allPosts.map(monthKey).filter(Boolean))].sort().reverse();
+    // Videos contribute their months too, otherwise the 영상 tab offers a
+    // month list that can only ever filter its own cards away.
+    const months = [...new Set(
+      [...childPosts(), ...childVideos()].map(monthKey).filter(Boolean),
+    )].sort().reverse();
     monthFilter.innerHTML = [
       '<option value="">전체 기간</option>',
       ...months.map((month) => `<option value="${month}">${month}</option>`),
@@ -2183,8 +2730,12 @@ APP_JS = """(() => {
     tabsNode.innerHTML = tabs.map((tab) => {
       const count = tab.key === "home"
         ? Object.values(state.newCounts).reduce((total, value) => total + value, 0)
-        : state.counts[tab.key] || 0;
-      const newCount = tab.key === "home" ? 0 : state.newCounts[tab.key] || 0;
+        : tab.key === VIDEO_TYPE
+          ? childVideos().length
+          : state.counts[tab.key] || 0;
+      const newCount = tab.key === "home" || tab.key === VIDEO_TYPE
+        ? 0
+        : state.newCounts[tab.key] || 0;
       const content = (
         `<span class="tab-icon" aria-hidden="true"><img src="${tab.icon}" alt=""></span>`
         + `<span class="tab-label">${tab.label}</span>`
@@ -2202,9 +2753,34 @@ APP_JS = """(() => {
     }).join("");
   }
 
+  function childVideos() {
+    return state.videos.filter((video) => (video.child || DEFAULT_CHILD) === state.activeChild);
+  }
+
+  function filteredVideos() {
+    const query = normalize(state.query).trim();
+    return childVideos().filter((video) => {
+      if (state.activeMonth && monthKey(video) !== state.activeMonth) return false;
+      if (!query) return true;
+      return normalize([video.title, video.date, video.summary].join(" ")).includes(query);
+    });
+  }
+
+  // 글에 child 가 없으면 서이 것으로 본다. 현재 Notion DB가 서이 하나뿐이라
+  // 예전 export 가 만든 posts.json 에는 이 필드가 없다.
+  const postChild = (post) => post.child || DEFAULT_CHILD;
+
+  function childPosts() {
+    return state.allPosts.filter((post) => postChild(post) === state.activeChild);
+  }
+
   function applyFilters() {
     const query = normalize(state.query).trim();
-    state.posts = state.allPosts.filter((post) => {
+    if (state.activeType === VIDEO_TYPE) {
+      state.posts = [];
+      return;
+    }
+    state.posts = childPosts().filter((post) => {
       if (state.activeType === "home") {
         if (!isNewPost(post)) return false;
       } else if (post.type !== state.activeType) {
@@ -2229,7 +2805,46 @@ APP_JS = """(() => {
     renderListCollapseState();
   }
 
+  function renderVideoList() {
+    const videos = filteredVideos();
+    const filters = [state.activeMonth, state.query.trim()].filter(Boolean).length;
+    listTitle.textContent = activeListLabel();
+    listCount.textContent = filters ? `${videos.length}개 필터됨` : `${videos.length}개`;
+    renderListCollapseState();
+
+    if (!videos.length) {
+      // 지금 자녀 기준으로 판단해야 한다. 전체 영상 수로 보면 살구처럼
+      // 영상이 하나도 없는 자녀에게 "필터 결과 없음"이라고 말하게 된다.
+      entryList.innerHTML = childVideos().length
+        ? '<div class="empty">조건에 맞는 영상이 없습니다.</div>'
+        : `<div class="empty">${escapeHtml(activeChild().name)} 영상이 아직 없습니다.</div>`;
+      return;
+    }
+
+    // 알림장·앨범·공지가 쓰는 .entry 행을 그대로 쓴다. 썸네일이 없으니
+    // 카드 그리드를 유지할 이유가 없고, .entry 가 이미 width/border/background
+    // 를 눕혀 둬서 <button> 에 그대로 붙는다.
+    entryList.innerHTML = videos.map((video) => {
+      const date = video.date ? `<span>${escapeHtml(video.date)}</span>` : "";
+      const summary = video.summary
+        ? `<span class="entry-summary">${escapeHtml(video.summary)}</span>`
+        : "";
+      return (
+        `<button class="entry" type="button" data-video-id="${escapeHtml(video.id)}">`
+        + '<span class="entry-thumb entry-thumb-video" aria-hidden="true">▶</span>'
+        + "<span>"
+        + `<span class="entry-kicker"><span class="badge video">영상</span>${date}</span>`
+        + `<span class="entry-title">${escapeHtml(video.title)}</span>${summary}`
+        + "</span></button>"
+      );
+    }).join("");
+  }
+
   function renderList() {
+    if (state.activeType === VIDEO_TYPE) {
+      renderVideoList();
+      return;
+    }
     listTitle.textContent = activeListLabel();
     const filters = [state.activeMonth, state.query.trim()].filter(Boolean).length;
     listCount.textContent = filters ? `${state.posts.length}개 필터됨` : `${state.posts.length}개`;
@@ -2387,7 +3002,7 @@ APP_JS = """(() => {
         + `<div class="detail-content">${post.content || ""}</div>`
         + renderPostNav()
       );
-      document.title = `${title} | 서이의 키즈노트`;
+      document.title = `${title} | ${activeChild().name}의 키즈노트`;
       cleanDetailContent(detail.querySelector(".detail-content"));
       state.lightboxItems = [];
       enhanceMediaLightbox(post);
@@ -2596,9 +3211,58 @@ APP_JS = """(() => {
     showLightbox(next);
   }
 
+  function openVideoModal(id) {
+    const video = state.videos.find((item) => item.id === id);
+    if (!video) return;
+    videoModalTitle.textContent = video.title;
+    videoModalLink.href = video.url;
+    // The iframe is built on open and destroyed on close rather than kept
+    // hidden: the host autoplays as soon as it is framed, so a parked
+    // iframe would mean audio from a modal nobody opened.
+    const frame = document.createElement("iframe");
+    frame.src = video.url;
+    frame.title = video.title;
+    frame.allow = "autoplay; fullscreen; encrypted-media";
+    frame.allowFullscreen = true;
+    frame.referrerPolicy = "no-referrer-when-downgrade";
+    videoModalFrame.replaceChildren(frame);
+    videoModal.hidden = false;
+    document.body.classList.add("modal-open");
+    videoModalClose.focus();
+  }
+
+  function closeVideoModal() {
+    if (videoModal.hidden) return;
+    videoModal.hidden = true;
+    videoModalFrame.replaceChildren();
+    videoModalLink.removeAttribute("href");
+    document.body.classList.remove("modal-open");
+  }
+
+  async function loadVideos() {
+    try {
+      const response = await fetch("/data/videos.json");
+      if (!response.ok) throw new Error("videos failed");
+      const manifest = await response.json();
+      state.videos = manifest.videos || [];
+    } catch {
+      // An export from before this feature shipped has no videos.json.
+      // The tab then just reads as empty instead of breaking the app.
+      state.videos = [];
+    }
+  }
+
   async function loadApp() {
-    renderBabyDays();
-    const requestedType = new URLSearchParams(window.location.search).get("type");
+    const params = new URLSearchParams(window.location.search);
+    const requestedChild = params.get("child");
+    if (children.some((child) => child.key === requestedChild)) {
+      state.activeChild = requestedChild;
+      window.localStorage.setItem("kidsnote.activeChild", state.activeChild);
+    }
+    renderProfile();
+    renderChildSwitch();
+    renderDocumentTitle();
+    const requestedType = params.get("type");
     if (tabs.some((tab) => tab.key === requestedType)) {
       state.activeType = requestedType;
       window.localStorage.setItem("kidsnote.activeType", state.activeType);
@@ -2616,19 +3280,29 @@ APP_JS = """(() => {
       if (!response.ok) throw new Error("list failed");
       const manifest = await response.json();
       state.allPosts = manifest.posts || [];
-      state.counts = manifest.counts || state.counts;
-      state.newCounts = countNewPosts(state.allPosts);
+      recomputeCounts();
       renderSyncMeta(manifest.exported_at);
       if (state.selectedId !== null) {
         const selectedPost = state.allPosts.find((post) => post.id === state.selectedId);
         if (!selectedPost) throw new Error("post not found");
+        // 딥링크로 들어온 글이 지금 보고 있는 자녀의 것이 아닐 수 있다.
+        // 글 쪽으로 맞춰야 사이드바와 본문이 따로 놀지 않는다.
+        if (postChild(selectedPost) !== state.activeChild) {
+          state.activeChild = postChild(selectedPost);
+          window.localStorage.setItem("kidsnote.activeChild", state.activeChild);
+          renderProfile();
+          renderChildSwitch();
+          renderDocumentTitle();
+        }
+        recomputeCounts();
         state.activeType = selectedPost.type;
-        state.detailPosts = state.allPosts.filter((post) => post.type === selectedPost.type);
+        state.detailPosts = childPosts().filter((post) => post.type === selectedPost.type);
         renderTabs();
         renderPageHeader();
         await loadDetail(state.selectedId);
       } else {
-        document.title = "서이의 키즈노트";
+        renderDocumentTitle();
+        await loadVideos();
         renderMonthOptions();
         refreshView();
       }
@@ -2647,6 +3321,22 @@ APP_JS = """(() => {
     state.activeType = target.dataset.type;
     window.localStorage.setItem("kidsnote.activeType", state.activeType);
     refreshView();
+  });
+
+  childSwitch.addEventListener("click", (event) => {
+    const chip = event.target.closest("button[data-child]");
+    if (chip) setActiveChild(chip.dataset.child);
+  });
+
+  entryList.addEventListener("click", (event) => {
+    const card = event.target.closest("button[data-video-id]");
+    if (!card) return;
+    openVideoModal(card.dataset.videoId);
+  });
+
+  videoModalClose.addEventListener("click", closeVideoModal);
+  videoModal.addEventListener("click", (event) => {
+    if (event.target === videoModal) closeVideoModal();
   });
 
   listToggle.addEventListener("click", toggleList);
@@ -2686,11 +3376,9 @@ APP_JS = """(() => {
   });
 
   profilePhoto.addEventListener("click", () => {
-    showLightbox(0, [{
-      src: PROFILE_IMAGE_SRC,
-      alt: "서이",
-      caption: "서이",
-    }]);
+    const child = activeChild();
+    if (!child.photo) return;
+    showLightbox(0, [{ src: child.photo, alt: child.name, caption: child.name }]);
   });
 
   lightbox.addEventListener("click", (event) => {
@@ -2721,6 +3409,12 @@ APP_JS = """(() => {
   });
 
   document.addEventListener("keydown", (event) => {
+    // The video modal takes Escape first so closing it never also tears
+    // down a lightbox sitting behind it.
+    if (event.key === "Escape" && !videoModal.hidden) {
+      closeVideoModal();
+      return;
+    }
     if (event.key === "Escape") closeLightbox();
     if (event.key === "ArrowLeft") moveLightbox(-1);
     if (event.key === "ArrowRight") moveLightbox(1);
@@ -2757,6 +3451,9 @@ HEADERS = """/data/*
 
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
+
+/video-thumbs/*
+  Cache-Control: public, max-age=604800
 """
 
 

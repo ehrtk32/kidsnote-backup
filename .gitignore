@@ -61,6 +61,12 @@ personas/
 # Excluded from the repo so it never ships via PyPI / GitHub.
 tools/
 
+# --- Cloudflare / Wrangler ---
+# Local miniflare state: a local D1 copy, KV, R2 and caches. Machine-local
+# scratch, and it holds whatever test rows you wrote while developing.
+.wrangler/
+**/.wrangler/
+
 # --- Logs ---
 logs/
 *.log

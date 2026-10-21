@@ -83,6 +83,29 @@ gh run list -R ehrtk32/kidsnote-backup -L 5
 **`--clean` 주의.** `dist/`의 `wp-content/`는 미디어 캐시로 재사용된다(`find_cached_media`).
 덕분에 전체 재-export도 ~4분이면 끝나지만, `--clean`을 주면 4GB를 전부 다시 내려받는다.
 
+**Pages Functions는 `static-export/`에서 배포해야 한다.** wrangler는 `functions/`와
+`wrangler.jsonc`를 **작업 디렉터리 기준**으로 찾는다. 넘겨주는 asset 디렉터리와는 무관하다.
+저장소 루트에서 `wrangler pages deploy static-export/dist`를 돌리면 정적 파일만 올라가고
+Functions와 D1 바인딩이 **조용히 빠진다** — 빌드는 성공하고 사이트도 멀쩡해 보이는데
+`/api/*`가 전부 SPA 폴백(index.html)으로 떨어진다. 404가 아니라 200에 HTML이 와서 더
+헷갈린다. 워크플로의 `working-directory: static-export`를 지우지 말 것.
+
+**`wrangler pages dev`는 `wrangler.jsonc`의 바인딩을 읽지 않는다.** `pages deploy`는 읽는다.
+`pages dev`에는 `--config` 플래그 자체가 없고 `--d1` / `--kv` / `--r2`로 따로 줘야 한다.
+로컬 실행은 이렇게 한다:
+
+```bash
+cd static-export
+npx wrangler pages dev --port 9600 --d1 DB=f3c5379c-7d6b-4bb4-9d42-e5d037b80eed
+```
+
+로컬 D1은 `.wrangler/state/v3/d1/`의 **별도 빈 복제본**이다(원격과 무관). 스키마를 새로
+적용하려면 그 sqlite 파일에 `schema.sql`을 직접 먹이면 된다.
+
+**프리뷰와 프로덕션이 같은 D1을 쓴다.** `wrangler.jsonc`에 최상위 `d1_databases`만 있고
+`env.preview` 오버라이드가 없다. 의도적인 선택이다(가족용, 스키마 이중 관리 회피). 대신
+`--branch` 프리뷰 배포에서 남긴 테스트 댓글·좋아요가 **실제 DB에 들어간다**는 점에 주의.
+
 **Notion 스키마 의존.** `resolve_schema()`가 property를 이름으로 찾는다 —
 `REPORT_ID_CANDIDATES`(현 DB에서는 `번호`)와 `DATE_CANDIDATES`(`날짜`). 이 두 property를
 Notion에서 이름 변경하면 export가 하드 에러로 죽는다. 현 DB 스키마가 노션 기본 템플릿
