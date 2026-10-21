@@ -40,7 +40,14 @@ function constantTimeEqual(a, b) {
 }
 
 const PASSCODE_KEY = "admin_passcode";
-const PBKDF2_ITERATIONS = 150_000;
+// Workers 는 PBKDF2 반복을 10만으로 막는다. 넘기면 해시를 **만들 때**
+// NotSupportedError 가 나는데, requireAdmin 은 검증만 하고 만들지 않으므로
+// 비번을 실제로 바꾸기 전까지 드러나지 않는다. 그 사이 화면은 멀쩡하다.
+//
+// 로컬 workerd 는 이 제한을 강제하지 않는다 — `wrangler pages dev` 에서는
+// 150000 이 200 으로 통과했고 프로덕션에서만 1101 로 죽었다. 이 값은
+// 올리지 말 것. 올리려면 로컬이 아니라 배포본에서 확인해야 한다.
+const PBKDF2_ITERATIONS = 100_000;
 
 const toB64 = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes)));
 const fromB64 = (text) => Uint8Array.from(atob(text), (c) => c.charCodeAt(0));

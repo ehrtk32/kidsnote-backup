@@ -62,6 +62,9 @@ export async function onRequestGet({ request, env }) {
       date: row.video_date ? row.video_date.replaceAll("-", ".") : "",
       sort_key: row.video_date,
       summary: row.summary,
+      // 등록 시각(epoch ms). 초음파처럼 video_date 가 빈 영상은 이게 유일한
+      // 시간 정보라, 프런트의 "새 영상" 표시가 이걸 쓴다.
+      created_at: row.created_at,
     })),
   });
 }

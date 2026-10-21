@@ -3246,6 +3246,31 @@ APP_JS = """(() => {
     return state.recentDateKeys.has(String(post.date || ""));
   }
 
+  // 영상은 글과 달리 달력 날짜가 없다. 초음파 제목이 "37주차 0일"이라
+  // video_date 가 비어 있고, 가진 시간 정보는 **등록 시각**뿐이다. 그래서
+  // "새로 찍은 영상"이 아니라 "새로 올린 영상"을 뜻한다 — 폴더에 넣고
+  // 동기화한 날 뜬다.
+  function isNewVideo(video) {
+    if (!video.created_at) return false;
+    return state.recentDateKeys.has(koreaDateKey(new Date(video.created_at)));
+  }
+
+  const newVideos = () => childVideos().filter(isNewVideo);
+
+  // 홈에 들어갈 것들. 새 사진은 따로 넣지 않는다 — 사진은 올라온 글에
+  // 딸려 있어서, 그 글이 이미 홈에 줄로 서 있다. 사진까지 줄을 세우면
+  // 같은 소식이 두 번 보인다.
+  function homeItems() {
+    return [...newVideos(), ...childPosts().filter(isNewPost)];
+  }
+
+  // 사진은 자기 날짜를 들고 있다(글에서 물려받는다). 같은 날 알림장 2건에
+  // 사진 12장이면 알림장 배지는 2, 사진 배지는 12다 — 세는 단위가 다를 뿐
+  // 둘 다 맞는 숫자다.
+  const newPhotos = () => childPhotos().filter(
+    (photo) => state.recentDateKeys.has(String(photo.date || "")),
+  );
+
   function countNewPosts(posts) {
     return posts.reduce((counts, post) => {
       if (isNewPost(post)) counts[post.type] = (counts[post.type] || 0) + 1;
@@ -3381,15 +3406,20 @@ APP_JS = """(() => {
     const detailRoute = state.selectedId !== null;
     tabsNode.innerHTML = tabs.map((tab) => {
       const count = tab.key === "home"
-        ? Object.values(state.newCounts).reduce((total, value) => total + value, 0)
+        ? homeItems().length
         : tab.key === VIDEO_TYPE
           ? childVideos().length
           : tab.key === PHOTOS_TYPE
             ? childPhotos().length
             : state.counts[tab.key] || 0;
-      const newCount = tab.key === "home" || tab.key === VIDEO_TYPE || tab.key === PHOTOS_TYPE
+      // 홈은 그 자체가 새 항목 목록이라 빨간 배지를 또 달지 않는다.
+      const newCount = tab.key === "home"
         ? 0
-        : state.newCounts[tab.key] || 0;
+        : tab.key === VIDEO_TYPE
+          ? newVideos().length
+          : tab.key === PHOTOS_TYPE
+            ? newPhotos().length
+            : state.newCounts[tab.key] || 0;
       const content = (
         `<span class="tab-icon" aria-hidden="true"><img src="${tab.icon}" alt=""></span>`
         + `<span class="tab-label">${tab.label}</span>`
@@ -3565,6 +3595,29 @@ APP_JS = """(() => {
     });
   }
 
+  // 알림장·앨범·공지가 쓰는 .entry 행을 그대로 쓴다. .entry 가 이미
+  // width/border/background 를 눕혀 둬서 <button> 에 그대로 붙는다.
+  // 영상 탭과 홈이 같이 쓴다 — 두 벌로 두면 한쪽만 고치는 일이 생긴다.
+  function videoRow(video) {
+    const date = video.date ? `<span>${escapeHtml(video.date)}</span>` : "";
+    const summary = video.summary
+      ? `<span class="entry-summary">${escapeHtml(video.summary)}</span>`
+      : "";
+    const newMarker = isNewVideo(video) ? '<span class="new-pill">NEW</span>' : "";
+    return (
+      '<div class="entry-row">'
+      + `<button class="entry" type="button" data-video-id="${escapeHtml(video.id)}">`
+      + thumbOf(video)
+      + "<span>"
+      + `<span class="entry-kicker"><span class="badge video">영상</span>${date}${newMarker}</span>`
+      + `<span class="entry-title">${escapeHtml(video.title)}</span>${summary}`
+      + "</span></button>"
+      + `<button class="admin-delete" type="button" data-delete-video="${escapeHtml(video.id)}"`
+      + ' aria-label="영상 삭제">🗑</button>'
+      + "</div>"
+    );
+  }
+
   function renderVideoList() {
     const videos = filteredVideos();
     const filters = [state.activeMonth, state.query.trim()].filter(Boolean).length;
@@ -3583,28 +3636,7 @@ APP_JS = """(() => {
       return;
     }
 
-    // 알림장·앨범·공지가 쓰는 .entry 행을 그대로 쓴다. 썸네일이 없으니
-    // 카드 그리드를 유지할 이유가 없고, .entry 가 이미 width/border/background
-    // 를 눕혀 둬서 <button> 에 그대로 붙는다.
-    entryList.innerHTML = videos.map((video) => {
-      const date = video.date ? `<span>${escapeHtml(video.date)}</span>` : "";
-      const summary = video.summary
-        ? `<span class="entry-summary">${escapeHtml(video.summary)}</span>`
-        : "";
-      return (
-        '<div class="entry-row">'
-        + `<button class="entry" type="button" data-video-id="${escapeHtml(video.id)}">`
-        + thumbOf(video)
-        + "<span>"
-        + `<span class="entry-kicker"><span class="badge video">영상</span>${date}</span>`
-        + `<span class="entry-title">${escapeHtml(video.title)}</span>${summary}`
-        + "</span></button>"
-        + `<button class="admin-delete" type="button" data-delete-video="${escapeHtml(video.id)}"`
-        + ' aria-label="영상 삭제">🗑</button>'
-        + "</div>"
-      );
-    }).join("");
-
+    entryList.innerHTML = videos.map(videoRow).join("");
     loadVisibleThumbs();
   }
 
@@ -3617,19 +3649,24 @@ APP_JS = """(() => {
       renderPhotoList();
       return;
     }
+    // 홈에서는 새 영상이 글과 같은 목록에 섞인다. 영상은 페이지가 아니라
+    // 모달로 열려서 <a> 가 아니라 <button> 이라, 행을 따로 만들어 앞에 붙인다.
+    const homeVideos = state.activeType === "home" ? newVideos() : [];
+
     listTitle.textContent = activeListLabel();
     const filters = [state.activeMonth, state.query.trim()].filter(Boolean).length;
-    listCount.textContent = filters ? `${state.posts.length}개 필터됨` : `${state.posts.length}개`;
+    const shown = state.posts.length + homeVideos.length;
+    listCount.textContent = filters ? `${shown}개 필터됨` : `${shown}개`;
     renderListCollapseState();
 
-    if (!state.posts.length) {
+    if (!state.posts.length && !homeVideos.length) {
       entryList.innerHTML = state.activeType === "home"
         ? '<div class="empty">최근 등록된 새로운 기록이 없습니다.</div>'
         : '<div class="empty">조건에 맞는 항목이 없습니다.</div>';
       return;
     }
 
-    entryList.innerHTML = state.posts.map((post) => {
+    entryList.innerHTML = homeVideos.map(videoRow).join("") + state.posts.map((post) => {
       const thumb = post.thumbnail_url ? ` style="background-image: url('${escapeHtml(post.thumbnail_url)}')"` : "";
       const fallback = post.thumbnail_url ? "" : escapeHtml(post.type_label);
       const title = displayTitle(post.title);
@@ -3644,6 +3681,8 @@ APP_JS = """(() => {
         + "</span></a>"
       );
     }).join("");
+
+    if (homeVideos.length) loadVisibleThumbs();
   }
 
   function enhanceMediaLightbox(post) {
