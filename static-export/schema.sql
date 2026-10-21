@@ -8,19 +8,29 @@
 -- 여기 쌓인 행은 그대로 따라온다. key 를 바꾸면 전부 고아가 된다.
 
 CREATE TABLE IF NOT EXISTS videos (
-  -- id 는 url 의 sha256 앞 12자리다. 같은 링크를 다시 넣으면 중복이 생기는
-  -- 대신 갱신된다.
+  -- id 는 출처 문자열의 sha256 앞 12자리다. 같은 링크·같은 파일을 다시
+  -- 넣으면 중복이 생기는 대신 갱신된다.
   id          TEXT PRIMARY KEY,
   child       TEXT NOT NULL,
-  url         TEXT NOT NULL,              -- 공유 링크 원본 (naver.me/... 등)
+
+  -- 'link'  : 공유 링크를 iframe 으로 띄운다. url 을 쓴다.
+  -- 'mybox' : MYBOX Open API 로 재생할 때마다 10분짜리 URL 을 받아
+  --           <video> 로 튼다. mybox_file_id 를 쓴다. 그 URL 은 1회용이라
+  --           여기 저장하지 않는다.
+  source      TEXT NOT NULL DEFAULT 'link',
+  url         TEXT NOT NULL DEFAULT '',
+  mybox_file_id TEXT NOT NULL DEFAULT '',
+
   title       TEXT NOT NULL DEFAULT '',
   video_date  TEXT NOT NULL DEFAULT '',   -- 'YYYY-MM-DD', 비어도 됨
+  -- 날짜가 없는 묶음(초음파 주차 등)의 순서. 클수록 먼저 온다.
+  seq         INTEGER NOT NULL DEFAULT 0,
   summary     TEXT NOT NULL DEFAULT '',
   created_at  INTEGER NOT NULL            -- epoch ms
 );
 
 CREATE INDEX IF NOT EXISTS ix_videos_child
-  ON videos (child, video_date DESC, created_at DESC);
+  ON videos (child, video_date DESC, seq DESC, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS comments (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,

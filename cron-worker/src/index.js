@@ -152,10 +152,41 @@ async function checkFreshness() {
   }
 }
 
+/**
+ * MYBOX 개인 액세스 토큰이 아직 살아 있는지 본다.
+ *
+ * 그 토큰은 최대 180일이고, 만료되면 401 이 온다. 아무도 안 보면 연동이
+ * 조용히 멈춘 채로 남는다 — 키즈노트 쿠키(30일)와 GitHub 스케줄에서
+ * 이미 두 번 겪은 방식이라, 신선도 확인에 같이 태운다.
+ */
+async function checkMyboxToken() {
+  let payload;
+  try {
+    const response = await fetch(`${SITE}/api/mybox/status`, {
+      headers: { "User-Agent": UA, accept: "application/json" },
+      cf: { cacheTtl: 0 },
+    });
+    const type = response.headers.get("content-type") || "";
+    if (!type.includes("application/json")) return;   // 아직 배포 전
+    payload = await response.json();
+  } catch (err) {
+    await notify("error", "mybox check failed", { error: String(err) });
+    return;
+  }
+
+  if (!payload.configured) return;    // 토큰을 아직 안 넣었다면 할 말이 없다
+  if (payload.ok) {
+    await notify("info", "mybox token ok");
+  } else {
+    await notify("error", "mybox token is not usable", payload);
+  }
+}
+
 export default {
   async scheduled(controller, env, ctx) {
     if (controller.cron === FRESHNESS_CRON) {
       await checkFreshness();
+      await checkMyboxToken();
       return;
     }
 

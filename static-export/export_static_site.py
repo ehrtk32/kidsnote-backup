@@ -847,6 +847,19 @@ INDEX_HTML = """<!doctype html>
         <button class="admin-submit" type="submit">영상 추가</button>
       </form>
 
+      <form class="admin-form admin-form-secondary" id="adminMyboxForm" hidden>
+        <button class="admin-toggle" id="adminMyboxToggle" type="button" aria-expanded="false">
+          MYBOX 폴더에서 가져오기
+        </button>
+        <div id="adminMyboxFields" hidden>
+          <label for="myboxChild">자녀</label>
+          <select id="myboxChild"></select>
+          <label for="myboxFolder">폴더</label>
+          <select id="myboxFolder"><option value="">불러오는 중...</option></select>
+          <button class="admin-submit" type="submit">가져오기</button>
+        </div>
+      </form>
+
       <form class="admin-form admin-form-secondary" id="adminPasscodeForm" hidden>
         <button class="admin-toggle" id="adminPasscodeToggle" type="button" aria-expanded="false">
           비밀번호 변경
@@ -2354,6 +2367,22 @@ body.modal-open {
   background: #000;
 }
 
+.video-modal-frame video {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: #000;
+}
+
+.video-loading {
+  margin: 0;
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: rgba(255, 255, 255, .8);
+  font-size: 14px;
+}
+
 .video-modal-frame iframe {
   width: 100%;
   height: 100%;
@@ -2870,6 +2899,11 @@ APP_JS = """(() => {
   const adminPasscodeInput = document.getElementById("adminPasscode");
   const adminVideoForm = document.getElementById("adminVideoForm");
   const adminMessage = document.getElementById("adminMessage");
+  const adminMyboxForm = document.getElementById("adminMyboxForm");
+  const adminMyboxToggle = document.getElementById("adminMyboxToggle");
+  const adminMyboxFields = document.getElementById("adminMyboxFields");
+  const myboxChild = document.getElementById("myboxChild");
+  const myboxFolder = document.getElementById("myboxFolder");
   const adminPasscodeForm = document.getElementById("adminPasscodeForm");
   const adminPasscodeToggle = document.getElementById("adminPasscodeToggle");
   const adminPasscodeFields = document.getElementById("adminPasscodeFields");
@@ -3840,6 +3874,7 @@ APP_JS = """(() => {
     } else {
       adminLoginForm.hidden = false;
       adminVideoForm.hidden = true;
+      adminMyboxForm.hidden = true;
       adminPasscodeForm.hidden = true;
       adminPasscodeInput.value = "";
       adminPasscodeInput.focus();
@@ -3856,11 +3891,14 @@ APP_JS = """(() => {
   function showAdminVideoForm() {
     adminLoginForm.hidden = true;
     adminVideoForm.hidden = false;
+    adminMyboxForm.hidden = false;
     adminPasscodeForm.hidden = false;
-    videoChild.innerHTML = children.map((child) => (
+    const options = children.map((child) => (
       `<option value="${escapeHtml(child.key)}"${child.key === state.activeChild ? " selected" : ""}>`
       + `${escapeHtml(child.name)}</option>`
     )).join("");
+    videoChild.innerHTML = options;
+    myboxChild.innerHTML = options;
     videoUrl.focus();
   }
 
@@ -3895,6 +3933,7 @@ APP_JS = """(() => {
       state.adminPasscode = "";
       adminLoginForm.hidden = false;
       adminVideoForm.hidden = true;
+      adminMyboxForm.hidden = true;
       adminPasscodeForm.hidden = true;
       adminPasscodeInput.value = "";
       adminPasscodeInput.focus();
@@ -3924,6 +3963,57 @@ APP_JS = """(() => {
     currentPasscode.value = "";
     newPasscode.value = "";
     newPasscodeConfirm.value = "";
+  }
+
+  /** MYBOX 루트의 폴더 목록을 드롭다운에 채운다. 비번이 필요하므로 로그인 뒤에만. */
+  async function loadMyboxFolders() {
+    myboxFolder.innerHTML = '<option value="">불러오는 중...</option>';
+    const result = await adminRequest("/api/mybox/list", "POST", {});
+    if (!result) {
+      myboxFolder.innerHTML = '<option value="">불러오지 못했습니다</option>';
+      return;
+    }
+    const folders = (result.resources || []).filter((item) => item.type === "folder");
+    if (!folders.length) {
+      myboxFolder.innerHTML = '<option value="">폴더가 없습니다</option>';
+      return;
+    }
+    myboxFolder.innerHTML = folders.map((folder) => (
+      `<option value="${escapeHtml(folder.id)}">${escapeHtml(folder.name)}</option>`
+    )).join("");
+    setAdminMessage("", false);
+  }
+
+  async function handleMyboxSync(event) {
+    event.preventDefault();
+    const folder = myboxFolder.value;
+    if (!folder) {
+      setAdminMessage("폴더를 선택해주세요.", true);
+      return;
+    }
+    setAdminMessage("가져오는 중...", false);
+    const result = await adminRequest("/api/mybox/sync", "POST", {
+      folder,
+      child: myboxChild.value,
+    });
+    if (!result) return;
+
+    const name = myboxFolder.options[myboxFolder.selectedIndex]?.textContent || "";
+    setAdminMessage(
+      result.count
+        ? `"${name}" 에서 영상 ${result.count}개를 가져왔습니다.`
+        : `"${name}" 에 동영상이 없습니다.`,
+      false,
+    );
+
+    await loadVideos();
+    if (myboxChild.value !== state.activeChild) {
+      setActiveChild(myboxChild.value);
+    } else {
+      recomputeCounts();
+      renderMonthOptions();
+      refreshView();
+    }
   }
 
   async function handlePasscodeChange(event) {
@@ -4021,10 +4111,52 @@ APP_JS = """(() => {
     }
   }
 
-  function openVideoModal(id) {
+  async function openVideoModal(id) {
     const video = state.videos.find((item) => item.id === id);
     if (!video) return;
     videoModalTitle.textContent = video.title;
+
+    if ((video.source || "link") === "mybox") {
+      // MYBOX 에서 가져온 영상. 재생 URL 은 10분짜리 1회용이라 목록에
+      // 담아 둘 수 없고, 열 때마다 받아 쓴다.
+      videoModalLink.removeAttribute("href");
+      videoModalFrame.replaceChildren(
+        Object.assign(document.createElement("p"), {
+          className: "video-loading",
+          textContent: "불러오는 중...",
+        }),
+      );
+      videoModal.hidden = false;
+      document.body.classList.add("modal-open");
+      videoModalClose.focus();
+
+      // MYBOX 가 주는 URL 을 직접 쓰지 않고 /stream 을 거친다. 그쪽 응답이
+      // application/octet-stream 이라 <video> 가 거부하기 때문이다.
+      const player = document.createElement("video");
+      player.src = `/api/videos/${encodeURIComponent(id)}/stream`;
+      player.controls = true;
+      player.autoplay = true;
+      player.playsInline = true;
+      player.addEventListener("error", () => {
+        videoModalFrame.replaceChildren(
+          Object.assign(document.createElement("p"), {
+            className: "video-loading",
+            textContent: "영상을 불러오지 못했습니다.",
+          }),
+        );
+      });
+      if (videoModal.hidden) return;   // 받는 사이에 닫았다면 그만둔다
+      videoModalFrame.replaceChildren(player);
+
+      const slot = document.getElementById("videoComments");
+      if (slot) {
+        slot.innerHTML = commentSectionHtml();
+        wireCommentForm("video", video.id);
+        loadComments("video", video.id);
+      }
+      return;
+    }
+
     videoModalLink.href = video.url;
     // The iframe is built on open and destroyed on close rather than kept
     // hidden: the host autoplays as soon as it is framed, so a parked
@@ -4293,6 +4425,17 @@ APP_JS = """(() => {
   });
   adminLoginForm.addEventListener("submit", handleAdminLogin);
   adminVideoForm.addEventListener("submit", handleVideoSubmit);
+  adminMyboxForm.addEventListener("submit", handleMyboxSync);
+  adminMyboxToggle.addEventListener("click", () => {
+    const open = adminMyboxFields.hidden;
+    adminMyboxFields.hidden = !open;
+    adminMyboxToggle.setAttribute("aria-expanded", String(open));
+    if (!open) return;
+    adminMyboxFields.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    // 폴더가 수십 개라 열 때 한 번만 읽는다.
+    if (myboxFolder.options.length <= 1) loadMyboxFolders();
+  });
+
   adminPasscodeForm.addEventListener("submit", handlePasscodeChange);
   adminPasscodeToggle.addEventListener("click", () => {
     const open = adminPasscodeFields.hidden;

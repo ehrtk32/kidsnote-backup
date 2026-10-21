@@ -118,6 +118,27 @@ npx wrangler pages dev --port 9600 --d1 DB=f3c5379c-7d6b-4bb4-9d42-e5d037b80eed
 아직 안 붙어서 정적 핸들러가 받은 것이다(정적 자산에 POST → 405). 같은 요청이 잠시 뒤엔
 201로 통과했다. 500이 아니라 405라 코드 버그처럼 안 보이니 주의. 10~20초 기다리고 검증한다.
 
+**영상은 두 가지 출처가 있다.** `videos.source` 가 가른다.
+- `link` — naver.me 같은 공유 링크. iframe 으로 띄운다. 호스트 UI가 같이 보인다.
+- `mybox` — MYBOX Open API. 관리자 모드에서 폴더를 고르면 그 안의 동영상이 한 번에
+  등록된다(`/api/mybox/sync`). 파일명의 `N주차_M일` 을 제목·정렬로 쓴다.
+
+**MYBOX 영상은 `/api/videos/{id}/stream` 을 거쳐야 재생된다.** MYBOX 다운로드 URL 은
+바이트는 mp4 인데 `content-type` 이 `application/octet-stream` 이라 `<video>` 가 거부한다
+(MediaError 4). Function 이 타입만 바로잡아 흘려보내고 Range 를 그대로 넘긴다(탐색 가능).
+그 URL 은 **1회용 10분**이라 D1 에 저장하지 않는다 — 요청마다 새로 받는다.
+
+**MYBOX API 경로 주의.** 루트 목록은 `/v1/drive/resources` 다. `/v1/drive/root/resources`
+로 쓰면 404 를 준다(문서에 루트만 경로 규칙이 다르다). 공유 링크를 만들거나 읽는
+엔드포인트는 **API 에 없다** — `naver.me/...` 는 웹/앱에서만 만들 수 있다.
+
+**`MYBOX_TOKEN` 은 개인 액세스 토큰이고 최대 180일이다.** 만료되면 401 이 오고 연동이
+조용히 멈춘다. cron-worker 의 22:00 점검이 `/api/mybox/status` 를 찔러 이를 잡는다.
+갱신은 MYBOX 웹 > 설정 > 계정 및 개인 액세스 토큰 관리에서 새로 만들어
+`wrangler pages secret put MYBOX_TOKEN --project-name seoi-kidsnote` (preview 도 따로).
+이 토큰은 OAuth 가 아니라 **계정 전체**에 접근하므로, 이걸 쓰는 엔드포인트는 전부
+관리자 전용이다. 예외는 `/stream` 과 `/play` — 등록된 영상만 열고 드라이브는 못 뒤진다.
+
 **관리자 모드 진입은 보이지 않는다.** PC는 **사이드바 하단**(동기화 시각 줄), 모바일은
 **화면 우상단 모서리 56×56px**를 누르면 팝업이 뜬다(`.admin-hotspot-desktop` /
 `.admin-hotspot-mobile`, 경계 860px). `aria-hidden` + `tabindex=-1`이라 탭 이동으로는

@@ -36,16 +36,16 @@ export async function onRequestGet({ request, env }) {
     if (!child) return badRequest(`child must be one of ${CHILD_KEYS.join(", ")}`);
     statement = env.DB
       .prepare(
-        `SELECT id, child, url, title, video_date, summary, created_at
+        `SELECT id, child, source, url, title, video_date, seq, summary, created_at
            FROM videos WHERE child = ?
-          ORDER BY video_date DESC, created_at DESC`,
+          ORDER BY video_date DESC, seq DESC, created_at DESC`,
       )
       .bind(child);
   } else {
     statement = env.DB.prepare(
-      `SELECT id, child, url, title, video_date, summary, created_at
+      `SELECT id, child, source, url, title, video_date, seq, summary, created_at
          FROM videos
-        ORDER BY video_date DESC, created_at DESC`,
+        ORDER BY video_date DESC, seq DESC, created_at DESC`,
     );
   }
 
@@ -55,6 +55,7 @@ export async function onRequestGet({ request, env }) {
     videos: results.map((row) => ({
       id: row.id,
       child: row.child,
+      source: row.source || "link",
       url: row.url,
       title: row.title,
       // 프런트가 쓰는 표시 형식은 글과 같은 'YYYY.MM.DD' 다.
@@ -99,8 +100,8 @@ export async function onRequestPost({ request, env }) {
   // 나오므로 이게 자연스러운 동작이다.
   await env.DB
     .prepare(
-      `INSERT INTO videos (id, child, url, title, video_date, summary, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO videos (id, child, source, url, title, video_date, summary, created_at)
+       VALUES (?, ?, 'link', ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          child = excluded.child,
          title = excluded.title,
@@ -115,6 +116,7 @@ export async function onRequestPost({ request, env }) {
     video: {
       id,
       child,
+      source: "link",
       url,
       title,
       date: videoDate ? videoDate.replaceAll("-", ".") : "",
