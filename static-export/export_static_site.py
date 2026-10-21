@@ -51,55 +51,6 @@ DATE_CANDIDATES = ("Date", "날짜")
 DEFAULT_CHILD = "seoi"
 CHILD_KEYS = ("seoi", "second")
 
-# ---------------------------------------------------------------------------
-# External videos
-# ---------------------------------------------------------------------------
-# Videos too large for Notion's 5 MiB free-tier cap live in external storage
-# (Naver MYBOX etc). Add the share link here and it shows up under the 영상
-# tab as a thumbnail card that opens the host's own player in a modal.
-#
-#   url    required. The share link, exactly as the host gave it.
-#   title  optional. Falls back to the page's og:title (usually the raw
-#          filename, e.g. "20250304_112212.mp4"), so set this for anything
-#          you want to read nicely.
-#   date   optional, "YYYY-MM-DD". Used for sorting and the card's date line.
-#
-# Why the link and not the direct media URL: MYBOX's playable URL carries an
-# `atoken` query param that eventually expires, and when it does every
-# hardcoded video breaks at once with no signal beyond "it stopped working".
-# The share link stays valid, so we frame it instead. The cost is that the
-# modal shows the host's player chrome rather than ours.
-#   child  optional, "seoi" or "second". Defaults to DEFAULT_CHILD.
-#
-# Shape of an entry:
-#
-#     {
-#         "url": "https://naver.me/XXXXXXXX",
-#         "title": "서이가 태어난 날",
-#         "date": "2025-03-04",
-#         "child": "seoi",
-#     }
-EXTERNAL_VIDEOS: list[dict[str, str]] = []
-
-# og:image URLs are signed too, so the thumbnail is downloaded at export time
-# and served from our own origin. Cached across runs like the Notion media.
-VIDEO_THUMB_DIR = "video-thumbs"
-VIDEO_BROWSER_UA = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/125.0 Safari/537.36"
-)
-META_TAG_PATTERN = re.compile(r"<meta\b[^>]*>", re.IGNORECASE)
-META_ATTR_PATTERN = re.compile(
-    r'(property|name|content)\s*=\s*"([^"]*)"' r"|(property|name|content)\s*=\s*'([^']*)'",
-    re.IGNORECASE,
-)
-# MYBOX's og:image is a 200x200 square crop. Its thumbnailer also answers
-# `type=w800` with a 800x450 widescreen frame, which is what a card wants.
-# Only a short whitelist of sizes works (f640_640 and f960_960 both answer
-# 200 with an empty body), so anything unexpected falls back to the og URL.
-VIDEO_THUMB_SIZE_PARAM = "w800"
-
-
 def load_env_file(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     if not path.exists():
@@ -573,11 +524,7 @@ def clean_generated_data(out_dir: Path) -> None:
     for path in (out_dir / "data/posts", out_dir / "posts"):
         if path.exists():
             shutil.rmtree(path)
-    for path in (
-        out_dir / "data/posts.json",
-        out_dir / "data/videos.json",
-        out_dir / "export-report.json",
-    ):
+    for path in (out_dir / "data/posts.json", out_dir / "export-report.json"):
         if path.exists():
             path.unlink()
 
@@ -598,157 +545,6 @@ def prune_unused_media(out_dir: Path, used_media_paths: set[Path]) -> int:
             except OSError:
                 pass
     return deleted
-
-
-def parse_og_tags(markup: str) -> dict[str, str]:
-    """Pull og:title / og:image / og:description out of a page's markup.
-
-    Attribute order varies by host, so each <meta> tag is scanned for its
-    own property/content pair rather than assuming property comes first.
-    """
-    found: dict[str, str] = {}
-    for tag in META_TAG_PATTERN.findall(markup):
-        attrs: dict[str, str] = {}
-        for match in META_ATTR_PATTERN.finditer(tag):
-            key = (match.group(1) or match.group(3) or "").lower()
-            value = match.group(2) if match.group(2) is not None else match.group(4)
-            if key:
-                attrs[key] = value or ""
-        key = (attrs.get("property") or attrs.get("name") or "").lower()
-        if key.startswith("og:") and "content" in attrs:
-            found.setdefault(key[3:], html.unescape(attrs["content"]))
-    return found
-
-
-def video_slug(url: str) -> str:
-    """Stable filename stem for a share link, so thumbnails cache across runs."""
-    return "video-" + hashlib.sha256(url.encode("utf-8")).hexdigest()[:12]
-
-
-def widescreen_thumb_url(url: str) -> str:
-    """Swap a MYBOX thumbnail's size param for the widescreen variant."""
-    if "type=" not in url:
-        return url
-    return re.sub(r"(?<=[?&])type=[^&]*", f"type={VIDEO_THUMB_SIZE_PARAM}", url)
-
-
-def download_video_thumb(
-    session: requests.Session, thumb_url: str, target_stem: Path
-) -> Path | None:
-    """Save a video's poster next to the site, returning the written path.
-
-    Both the widescreen and the original og:image URL are tried: the size
-    whitelist is undocumented, and a rejected size answers 200 with an empty
-    body rather than an error status.
-    """
-    cached = sorted(target_stem.parent.glob(f"{target_stem.name}.*"))
-    if cached:
-        return cached[0]
-    candidates = [widescreen_thumb_url(thumb_url)]
-    if candidates[0] != thumb_url:
-        candidates.append(thumb_url)
-    for candidate in candidates:
-        try:
-            response = session.get(
-                candidate, timeout=60, headers={"User-Agent": VIDEO_BROWSER_UA}
-            )
-            response.raise_for_status()
-        except Exception:
-            continue
-        content_type = response.headers.get("Content-Type") or ""
-        if not response.content or not content_type.startswith("image/"):
-            continue
-        target = target_stem.with_name(
-            target_stem.name + infer_extension(content_type, candidate)
-        )
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(response.content)
-        return target
-    return None
-
-
-def export_videos(
-    out_dir: Path, download_media: bool
-) -> tuple[list[dict[str, Any]], list[str]]:
-    """Resolve every EXTERNAL_VIDEOS entry into a card the site can render.
-
-    Failures are returned rather than raised: a video host being slow must
-    not take down a deploy of 400 alimnotas. They are reported separately
-    from `missing_media` for the same reason — the workflow treats a missing
-    Notion media file as a hard stop, and a poster image is not that.
-    """
-    if not EXTERNAL_VIDEOS:
-        return [], []
-
-    session = requests.Session()
-    thumb_dir = out_dir / VIDEO_THUMB_DIR
-    videos: list[dict[str, Any]] = []
-    failures: list[str] = []
-    used_thumbs: set[Path] = set()
-
-    for index, entry in enumerate(EXTERNAL_VIDEOS, start=1):
-        url = (entry.get("url") or "").strip()
-        if not url:
-            failures.append(f"entry #{index}: no url")
-            continue
-        print(f"[video {index}/{len(EXTERNAL_VIDEOS)}] {url}", flush=True)
-
-        og: dict[str, str] = {}
-        if download_media:
-            try:
-                response = session.get(
-                    url, timeout=60, headers={"User-Agent": VIDEO_BROWSER_UA}
-                )
-                response.raise_for_status()
-                og = parse_og_tags(response.text)
-            except Exception as exc:
-                failures.append(f"{url}: metadata fetch failed ({exc})")
-
-        thumbnail_url = ""
-        if og.get("image"):
-            saved = download_video_thumb(
-                session, og["image"], thumb_dir / video_slug(url)
-            )
-            if saved:
-                used_thumbs.add(saved.resolve())
-                thumbnail_url = "/" + saved.relative_to(out_dir).as_posix()
-            else:
-                failures.append(f"{url}: thumbnail download failed")
-        else:
-            cached = sorted(thumb_dir.glob(f"{video_slug(url)}.*"))
-            if cached:
-                used_thumbs.add(cached[0].resolve())
-                thumbnail_url = "/" + cached[0].relative_to(out_dir).as_posix()
-
-        raw_date = (entry.get("date") or "").strip()
-        child = (entry.get("child") or DEFAULT_CHILD).strip()
-        if child not in CHILD_KEYS:
-            failures.append(f"{url}: unknown child {child!r}, falling back to {DEFAULT_CHILD}")
-            child = DEFAULT_CHILD
-        videos.append({
-            "id": video_slug(url),
-            "child": child,
-            "url": url,
-            "title": (entry.get("title") or og.get("title") or "영상").strip(),
-            # Same "YYYY.MM.DD" shape the posts use, so the shared month
-            # filter and search treat a video like any other entry.
-            "date": display_date(raw_date),
-            "sort_key": raw_date,
-            # og:description is deliberately not a fallback: hosts put share
-            # boilerplate there ("X님이 공유한 동영상을 확인하세요"), which is
-            # noise on the card and leaks the uploader's account nickname.
-            "summary": (entry.get("summary") or "").strip(),
-            "thumbnail_url": thumbnail_url,
-        })
-
-    # Drop posters for links that are no longer listed.
-    if thumb_dir.exists():
-        for path in thumb_dir.iterdir():
-            if path.is_file() and path.resolve() not in used_thumbs:
-                path.unlink()
-
-    videos.sort(key=lambda video: (video["sort_key"] or "", video["title"]), reverse=True)
-    return videos, failures
 
 
 def file_stats(out_dir: Path) -> dict[str, Any]:
@@ -828,16 +624,6 @@ def main() -> int:
     write_text(out_dir / "data/posts.json", json.dumps(manifest, ensure_ascii=False, separators=(",", ":")))
     write_post_routes(out_dir, posts, index_html)
 
-    videos, video_failures = export_videos(out_dir, download_media=not args.skip_media)
-    write_text(
-        out_dir / "data/videos.json",
-        json.dumps(
-            {"count": len(videos), "videos": videos},
-            ensure_ascii=False,
-            separators=(",", ":"),
-        ),
-    )
-
     pruned_media_count = prune_unused_media(out_dir, renderer.used_media_paths)
     stats = file_stats(out_dir)
     report = {
@@ -845,12 +631,6 @@ def main() -> int:
         "missing_media_count": len(renderer.missing_media),
         "missing_media": renderer.missing_media[:50],
         "pruned_media_count": pruned_media_count,
-        # Deliberately separate from missing_media: the deploy gate treats a
-        # missing Notion file as fatal, and a video poster is not worth
-        # blocking 400 alimnotas over.
-        "video_count": len(videos),
-        "video_issue_count": len(video_failures),
-        "video_issues": video_failures[:20],
         **stats,
     }
     write_text(out_dir / "export-report.json", json.dumps(report, ensure_ascii=False, indent=2))
@@ -915,7 +695,10 @@ INDEX_HTML = """<!doctype html>
           <p class="content-eyebrow" id="pageEyebrow"></p>
           <h2 class="content-title" id="pageTitle">홈</h2>
         </div>
-        <button class="filter-toggle-button" id="filterToggle" type="button" aria-expanded="false" aria-controls="filterTools">필터 목록 열기</button>
+        <div class="content-actions">
+          <button class="filter-toggle-button" id="filterToggle" type="button" aria-expanded="false" aria-controls="filterTools">필터 목록 열기</button>
+          <button class="admin-button" id="adminButton" type="button" aria-label="관리자 모드">관리자</button>
+        </div>
       </header>
       <section class="tools" id="filterTools" aria-label="검색과 필터" hidden>
         <label class="search-box">
@@ -964,6 +747,34 @@ INDEX_HTML = """<!doctype html>
       <figcaption id="lightboxCaption"></figcaption>
     </figure>
     <button class="lightbox-nav lightbox-next" type="button" aria-label="다음 사진">&#8250;</button>
+  </div>
+  <div class="admin-modal" id="adminModal" hidden role="dialog" aria-modal="true" aria-labelledby="adminModalTitle">
+    <div class="admin-panel">
+      <header class="admin-head">
+        <h3 id="adminModalTitle">관리자 모드</h3>
+        <button class="admin-close" type="button" aria-label="닫기">&times;</button>
+      </header>
+
+      <form class="admin-form" id="adminLoginForm">
+        <label for="adminPasscode">관리자 비밀번호</label>
+        <input id="adminPasscode" type="password" inputmode="numeric" autocomplete="off" placeholder="6자리">
+        <button class="admin-submit" type="submit">확인</button>
+      </form>
+
+      <form class="admin-form" id="adminVideoForm" hidden>
+        <label for="videoChild">자녀</label>
+        <select id="videoChild"></select>
+        <label for="videoUrl">영상 공유 링크</label>
+        <input id="videoUrl" type="url" placeholder="https://naver.me/..." autocomplete="off">
+        <label for="videoTitle">제목</label>
+        <input id="videoTitle" type="text" maxlength="200" autocomplete="off">
+        <label for="videoDate">날짜 <span class="admin-optional">(선택)</span></label>
+        <input id="videoDate" type="date">
+        <button class="admin-submit" type="submit">영상 추가</button>
+      </form>
+
+      <p class="admin-message" id="adminMessage" aria-live="polite"></p>
+    </div>
   </div>
   <div class="video-modal" id="videoModal" hidden role="dialog" aria-modal="true" aria-labelledby="videoModalTitle">
     <div class="video-modal-panel">
@@ -1923,6 +1734,143 @@ body:not(.locked) .passcode-screen {
   background: var(--video);
 }
 
+/* ---------- 관리자 모드 ---------- */
+.content-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-button {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 7px 12px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.admin-button:hover {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+.admin-modal[hidden] {
+  display: none;
+}
+
+.admin-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: rgba(10, 12, 11, .5);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+
+.admin-panel {
+  width: min(420px, 100%);
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  background: var(--surface);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+}
+
+.admin-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 10px 14px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.admin-head h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.admin-close {
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--surface-soft);
+  color: var(--ink);
+  font-size: 21px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.admin-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px 18px 4px;
+}
+
+.admin-form[hidden] {
+  display: none;
+}
+
+.admin-form label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-top: 6px;
+}
+
+.admin-optional {
+  font-weight: 400;
+}
+
+.admin-form input,
+.admin-form select {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 9px 11px;
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--ink);
+  background: var(--surface);
+}
+
+.admin-form input:focus,
+.admin-form select:focus {
+  outline: 2px solid var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.admin-submit {
+  margin-top: 14px;
+  border: 0;
+  border-radius: 10px;
+  padding: 11px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.admin-submit:hover {
+  background: var(--accent-strong);
+}
+
+.admin-message {
+  margin: 10px 18px 16px;
+  min-height: 18px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.admin-message.is-error {
+  color: var(--danger);
+}
+
 /* ---------- 영상 모달 ---------- */
 body.modal-open {
   overflow: hidden;
@@ -2417,6 +2365,8 @@ APP_JS = """(() => {
     allPosts: [],
     posts: [],
     videos: [],
+    videosLoaded: false,
+    adminPasscode: "",
     counts: { daily: 0, album: 0, announcement: 0 },
     newCounts: { daily: 0, album: 0, announcement: 0 },
     recentDateKeys: recentDateKeys(),
@@ -2462,6 +2412,17 @@ APP_JS = """(() => {
   const profileName = document.getElementById("profileName");
   const profileMeta = document.getElementById("profileMeta");
   const childSwitch = document.getElementById("childSwitch");
+  const adminButton = document.getElementById("adminButton");
+  const adminModal = document.getElementById("adminModal");
+  const adminClose = document.querySelector(".admin-close");
+  const adminLoginForm = document.getElementById("adminLoginForm");
+  const adminPasscodeInput = document.getElementById("adminPasscode");
+  const adminVideoForm = document.getElementById("adminVideoForm");
+  const adminMessage = document.getElementById("adminMessage");
+  const videoChild = document.getElementById("videoChild");
+  const videoUrl = document.getElementById("videoUrl");
+  const videoTitle = document.getElementById("videoTitle");
+  const videoDate = document.getElementById("videoDate");
   const videoModal = document.getElementById("videoModal");
   const videoModalTitle = document.getElementById("videoModalTitle");
   const videoModalFrame = document.getElementById("videoModalFrame");
@@ -2817,7 +2778,9 @@ APP_JS = """(() => {
       // 영상이 하나도 없는 자녀에게 "필터 결과 없음"이라고 말하게 된다.
       entryList.innerHTML = childVideos().length
         ? '<div class="empty">조건에 맞는 영상이 없습니다.</div>'
-        : `<div class="empty">${escapeHtml(activeChild().name)} 영상이 아직 없습니다.</div>`;
+        : state.videosLoaded
+          ? `<div class="empty">${escapeHtml(activeChild().name)} 영상이 아직 없습니다.</div>`
+          : '<div class="error">영상 목록을 불러오지 못했습니다.</div>';
       return;
     }
 
@@ -3211,6 +3174,135 @@ APP_JS = """(() => {
     showLightbox(next);
   }
 
+  // ---- 관리자 모드 ----
+  // 비밀번호는 Function 이 Pages Secret 과 대조한다. 여기서 들고 있는 값은
+  // 다음 요청에 같이 보내기 위한 것일 뿐이고, 이 코드가 통과 여부를 정하지
+  // 않는다. 사이트 입구의 가족 패스코드와 다른 점이 이것이다.
+  function setAdminMessage(text, isError) {
+    adminMessage.textContent = text;
+    adminMessage.classList.toggle("is-error", Boolean(isError));
+  }
+
+  function openAdminModal() {
+    adminModal.hidden = false;
+    document.body.classList.add("modal-open");
+    setAdminMessage("", false);
+    if (state.adminPasscode) {
+      showAdminVideoForm();
+    } else {
+      adminLoginForm.hidden = false;
+      adminVideoForm.hidden = true;
+      adminPasscodeInput.value = "";
+      adminPasscodeInput.focus();
+    }
+  }
+
+  function closeAdminModal() {
+    if (adminModal.hidden) return;
+    adminModal.hidden = true;
+    document.body.classList.remove("modal-open");
+    adminPasscodeInput.value = "";
+  }
+
+  function showAdminVideoForm() {
+    adminLoginForm.hidden = true;
+    adminVideoForm.hidden = false;
+    videoChild.innerHTML = children.map((child) => (
+      `<option value="${escapeHtml(child.key)}"${child.key === state.activeChild ? " selected" : ""}>`
+      + `${escapeHtml(child.name)}</option>`
+    )).join("");
+    videoUrl.focus();
+  }
+
+  /** 관리자 API 호출 공통. 통과하면 payload, 아니면 null 을 주고 메시지를 띄운다. */
+  async function adminRequest(url, method, body) {
+    let response;
+    try {
+      response = await fetch(url, {
+        method,
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify({ ...body, passcode: state.adminPasscode }),
+      });
+    } catch {
+      setAdminMessage("서버에 연결하지 못했습니다.", true);
+      return null;
+    }
+
+    const type = response.headers.get("content-type") || "";
+    if (!type.includes("application/json")) {
+      setAdminMessage("API를 찾을 수 없습니다. 배포에 Functions가 빠졌을 수 있습니다.", true);
+      return null;
+    }
+
+    const payload = await response.json().catch(() => ({}));
+    if (response.ok) return payload;
+
+    if (response.status === 429) {
+      const minutes = Math.ceil((payload.retry_after_seconds || 0) / 60);
+      setAdminMessage(`시도가 너무 많습니다. ${minutes}분 뒤에 다시 해주세요.`, true);
+    } else if (response.status === 401) {
+      // 비번이 틀렸거나 바뀐 것이므로 들고 있던 값을 버린다.
+      state.adminPasscode = "";
+      adminLoginForm.hidden = false;
+      adminVideoForm.hidden = true;
+      adminPasscodeInput.value = "";
+      adminPasscodeInput.focus();
+      setAdminMessage("비밀번호가 맞지 않습니다.", true);
+    } else {
+      setAdminMessage(payload.error || "요청에 실패했습니다.", true);
+    }
+    return null;
+  }
+
+  async function handleAdminLogin(event) {
+    event.preventDefault();
+    const value = adminPasscodeInput.value.trim();
+    if (!value) {
+      setAdminMessage("비밀번호를 입력해주세요.", true);
+      return;
+    }
+    // 전용 로그인 엔드포인트를 두지 않는다. 목록 조회는 비번이 필요 없고,
+    // 추가는 어차피 비번을 같이 보내므로, 확인은 첫 추가에서 자연히 이뤄진다.
+    // 여기서는 값만 받아 두고 폼을 연다.
+    state.adminPasscode = value;
+    setAdminMessage("", false);
+    showAdminVideoForm();
+  }
+
+  async function handleVideoSubmit(event) {
+    event.preventDefault();
+    const payload = {
+      child: videoChild.value,
+      url: videoUrl.value.trim(),
+      title: videoTitle.value.trim(),
+      date: videoDate.value,
+    };
+    if (!payload.url || !payload.title) {
+      setAdminMessage("링크와 제목은 필수입니다.", true);
+      return;
+    }
+
+    setAdminMessage("추가하는 중...", false);
+    const result = await adminRequest("/api/videos", "POST", payload);
+    if (!result) return;
+
+    setAdminMessage(`"${result.video.title}" 추가했습니다.`, false);
+    videoUrl.value = "";
+    videoTitle.value = "";
+    videoDate.value = "";
+    videoUrl.focus();
+
+    await loadVideos();
+    // 방금 넣은 영상이 지금 보고 있는 자녀의 것이 아니면 그쪽으로 옮겨 준다.
+    if (result.video.child !== state.activeChild) {
+      setActiveChild(result.video.child);
+    } else {
+      recomputeCounts();
+      renderMonthOptions();
+      refreshView();
+    }
+  }
+
   function openVideoModal(id) {
     const video = state.videos.find((item) => item.id === id);
     if (!video) return;
@@ -3241,14 +3333,17 @@ APP_JS = """(() => {
 
   async function loadVideos() {
     try {
-      const response = await fetch("/data/videos.json");
-      if (!response.ok) throw new Error("videos failed");
-      const manifest = await response.json();
-      state.videos = manifest.videos || [];
+      const response = await fetch("/api/videos", { headers: { accept: "application/json" } });
+      // Functions 가 빠진 배포에서는 /api/* 가 SPA 폴백으로 떨어져 200 에
+      // HTML 이 온다. 상태 코드만 보면 통과해 버리므로 타입을 확인한다.
+      const type = response.headers.get("content-type") || "";
+      if (!response.ok || !type.includes("application/json")) throw new Error("videos api");
+      const payload = await response.json();
+      state.videos = payload.videos || [];
+      state.videosLoaded = true;
     } catch {
-      // An export from before this feature shipped has no videos.json.
-      // The tab then just reads as empty instead of breaking the app.
       state.videos = [];
+      state.videosLoaded = false;
     }
   }
 
@@ -3334,6 +3429,14 @@ APP_JS = """(() => {
     openVideoModal(card.dataset.videoId);
   });
 
+  adminButton.addEventListener("click", openAdminModal);
+  adminClose.addEventListener("click", closeAdminModal);
+  adminModal.addEventListener("click", (event) => {
+    if (event.target === adminModal) closeAdminModal();
+  });
+  adminLoginForm.addEventListener("submit", handleAdminLogin);
+  adminVideoForm.addEventListener("submit", handleVideoSubmit);
+
   videoModalClose.addEventListener("click", closeVideoModal);
   videoModal.addEventListener("click", (event) => {
     if (event.target === videoModal) closeVideoModal();
@@ -3411,6 +3514,10 @@ APP_JS = """(() => {
   document.addEventListener("keydown", (event) => {
     // The video modal takes Escape first so closing it never also tears
     // down a lightbox sitting behind it.
+    if (event.key === "Escape" && !adminModal.hidden) {
+      closeAdminModal();
+      return;
+    }
     if (event.key === "Escape" && !videoModal.hidden) {
       closeVideoModal();
       return;
@@ -3452,8 +3559,6 @@ HEADERS = """/data/*
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
 
-/video-thumbs/*
-  Cache-Control: public, max-age=604800
 """
 
 

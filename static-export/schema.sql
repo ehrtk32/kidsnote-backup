@@ -8,12 +8,14 @@
 -- 여기 쌓인 행은 그대로 따라온다. key 를 바꾸면 전부 고아가 된다.
 
 CREATE TABLE IF NOT EXISTS videos (
-  id          TEXT PRIMARY KEY,           -- video_slug(url) 과 동일 규칙
+  -- id 는 url 의 sha256 앞 12자리다. 같은 링크를 다시 넣으면 중복이 생기는
+  -- 대신 갱신된다.
+  id          TEXT PRIMARY KEY,
   child       TEXT NOT NULL,
   url         TEXT NOT NULL,              -- 공유 링크 원본 (naver.me/... 등)
   title       TEXT NOT NULL DEFAULT '',
   video_date  TEXT NOT NULL DEFAULT '',   -- 'YYYY-MM-DD', 비어도 됨
-  thumb_url   TEXT NOT NULL DEFAULT '',   -- og:image. 토큰이 만료되므로 캐시 취급
+  summary     TEXT NOT NULL DEFAULT '',
   created_at  INTEGER NOT NULL            -- epoch ms
 );
 
@@ -52,3 +54,16 @@ CREATE TABLE IF NOT EXISTS likes (
 
 CREATE INDEX IF NOT EXISTS ix_likes_photo ON likes (photo_id);
 CREATE INDEX IF NOT EXISTS ix_likes_child ON likes (child, created_at DESC);
+
+-- 관리자 비번 무차별 대입 방어.
+--
+-- 6자리 숫자는 경우의 수가 100만뿐이라, 제한이 없으면 스크립트로 몇 분이면
+-- 뚫린다. 서버에서 검증한다는 사실만으로는 부족하다. IP 당 몇 번 틀리면
+-- 잠시 막는 정도면 현실적으로 불가능해진다 — 지켜야 할 것이 "영상 링크 한
+-- 줄"이라 그 이상은 과하다.
+CREATE TABLE IF NOT EXISTS auth_attempts (
+  ip            TEXT PRIMARY KEY,
+  fails         INTEGER NOT NULL DEFAULT 0,
+  blocked_until INTEGER NOT NULL DEFAULT 0,  -- epoch ms
+  updated_at    INTEGER NOT NULL
+);
