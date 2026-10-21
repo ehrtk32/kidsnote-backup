@@ -118,10 +118,17 @@ npx wrangler pages dev --port 9600 --d1 DB=f3c5379c-7d6b-4bb4-9d42-e5d037b80eed
 아직 안 붙어서 정적 핸들러가 받은 것이다(정적 자산에 POST → 405). 같은 요청이 잠시 뒤엔
 201로 통과했다. 500이 아니라 405라 코드 버그처럼 안 보이니 주의. 10~20초 기다리고 검증한다.
 
-**관리자 비번은 `ADMIN_PASSCODE` Pages Secret이다.** production과 preview에 각각 넣어야
-한다(`wrangler pages secret put ADMIN_PASSCODE --project-name seoi-kidsnote [--env preview]`).
-사이트 입구의 가족 패스코드와 달리 이건 Function이 서버에서 대조하므로 실제로 막힌다.
-6자리 숫자라 `auth_attempts` 테이블로 IP당 5회 실패 시 15분 차단한다.
+**관리자 비번은 D1의 `settings` 표에 산다.** `ADMIN_PASSCODE` Pages Secret은 **부트스트랩
+전용**이다 — 그 표에 행이 없을 때만 쓰이고, 사이트에서 한 번 변경하면 그 뒤로는 무시된다.
+Function이 PBKDF2(150k)로 대조하므로 사이트 입구의 가족 패스코드와 달리 실제로 막히고,
+`auth_attempts` 표로 IP당 5회 실패 시 15분 차단한다.
+
+새 비번을 잊었다면 행을 지워 시크릿으로 되돌아간다:
+```bash
+cd static-export
+npx wrangler d1 execute papa_pjh --remote --command \
+  "DELETE FROM settings WHERE key='admin_passcode'"
+```
 
 **공개 저장소에 실제 아이 사진·이름을 올리지 말 것.** README 스크린샷에 아이 실명·반 이름·
 예방접종 이력이, 쿠키 안내 스크린샷에 `sessionid` 값 일부가 들어가 있었다(2026-10-21 제거·마스킹).

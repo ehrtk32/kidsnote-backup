@@ -845,6 +845,21 @@ INDEX_HTML = """<!doctype html>
         <button class="admin-submit" type="submit">영상 추가</button>
       </form>
 
+      <form class="admin-form admin-form-secondary" id="adminPasscodeForm" hidden>
+        <button class="admin-toggle" id="adminPasscodeToggle" type="button" aria-expanded="false">
+          비밀번호 변경
+        </button>
+        <div id="adminPasscodeFields" hidden>
+          <label for="currentPasscode">현재 비밀번호</label>
+          <input id="currentPasscode" type="password" autocomplete="off">
+          <label for="newPasscode">새 비밀번호</label>
+          <input id="newPasscode" type="password" autocomplete="off" placeholder="4자 이상">
+          <label for="newPasscodeConfirm">새 비밀번호 확인</label>
+          <input id="newPasscodeConfirm" type="password" autocomplete="off">
+          <button class="admin-submit" type="submit">변경</button>
+        </div>
+      </form>
+
       <p class="admin-message" id="adminMessage" aria-live="polite"></p>
     </div>
   </div>
@@ -2174,6 +2189,37 @@ body:not(.locked) .passcode-screen {
   background: var(--accent-strong);
 }
 
+.admin-form-secondary {
+  border-top: 1px solid var(--line);
+  margin-top: 14px;
+  padding-top: 12px;
+}
+
+.admin-toggle {
+  align-self: flex-start;
+  border: 0;
+  padding: 2px 0;
+  background: none;
+  color: var(--muted);
+  font-size: 13px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.admin-toggle:hover {
+  color: var(--accent-strong);
+}
+
+#adminPasscodeFields {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#adminPasscodeFields[hidden] {
+  display: none;
+}
+
 .admin-message {
   margin: 10px 18px 16px;
   min-height: 18px;
@@ -2758,6 +2804,12 @@ APP_JS = """(() => {
   const adminPasscodeInput = document.getElementById("adminPasscode");
   const adminVideoForm = document.getElementById("adminVideoForm");
   const adminMessage = document.getElementById("adminMessage");
+  const adminPasscodeForm = document.getElementById("adminPasscodeForm");
+  const adminPasscodeToggle = document.getElementById("adminPasscodeToggle");
+  const adminPasscodeFields = document.getElementById("adminPasscodeFields");
+  const currentPasscode = document.getElementById("currentPasscode");
+  const newPasscode = document.getElementById("newPasscode");
+  const newPasscodeConfirm = document.getElementById("newPasscodeConfirm");
   const videoChild = document.getElementById("videoChild");
   const videoUrl = document.getElementById("videoUrl");
   const videoTitle = document.getElementById("videoTitle");
@@ -3722,6 +3774,7 @@ APP_JS = """(() => {
     } else {
       adminLoginForm.hidden = false;
       adminVideoForm.hidden = true;
+      adminPasscodeForm.hidden = true;
       adminPasscodeInput.value = "";
       adminPasscodeInput.focus();
     }
@@ -3737,6 +3790,7 @@ APP_JS = """(() => {
   function showAdminVideoForm() {
     adminLoginForm.hidden = true;
     adminVideoForm.hidden = false;
+    adminPasscodeForm.hidden = false;
     videoChild.innerHTML = children.map((child) => (
       `<option value="${escapeHtml(child.key)}"${child.key === state.activeChild ? " selected" : ""}>`
       + `${escapeHtml(child.name)}</option>`
@@ -3775,6 +3829,7 @@ APP_JS = """(() => {
       state.adminPasscode = "";
       adminLoginForm.hidden = false;
       adminVideoForm.hidden = true;
+      adminPasscodeForm.hidden = true;
       adminPasscodeInput.value = "";
       adminPasscodeInput.focus();
       setAdminMessage("비밀번호가 맞지 않습니다.", true);
@@ -3797,6 +3852,73 @@ APP_JS = """(() => {
     state.adminPasscode = value;
     setAdminMessage("", false);
     showAdminVideoForm();
+  }
+
+  function clearPasscodeFields() {
+    currentPasscode.value = "";
+    newPasscode.value = "";
+    newPasscodeConfirm.value = "";
+  }
+
+  async function handlePasscodeChange(event) {
+    event.preventDefault();
+    const current = currentPasscode.value.trim();
+    const next = newPasscode.value.trim();
+    const confirm = newPasscodeConfirm.value.trim();
+
+    if (!current || !next) {
+      setAdminMessage("현재 비밀번호와 새 비밀번호를 입력해주세요.", true);
+      return;
+    }
+    if (next !== confirm) {
+      setAdminMessage("새 비밀번호가 서로 다릅니다.", true);
+      return;
+    }
+    if (next.length < 4) {
+      setAdminMessage("새 비밀번호는 4자 이상이어야 합니다.", true);
+      return;
+    }
+
+    setAdminMessage("변경하는 중...", false);
+    // 현재 비번은 폼에 입력된 값을 쓴다. 모달에 들고 있던 값이 아니라 —
+    // 바꾸는 사람이 지금 알고 있는지 확인하는 것이 요점이기 때문이다.
+    let response;
+    try {
+      response = await fetch("/api/admin/passcode", {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify({ passcode: current, new_passcode: next }),
+      });
+    } catch {
+      setAdminMessage("서버에 연결하지 못했습니다.", true);
+      return;
+    }
+
+    const type = response.headers.get("content-type") || "";
+    if (!type.includes("application/json")) {
+      setAdminMessage("API를 찾을 수 없습니다. 배포에 Functions가 빠졌을 수 있습니다.", true);
+      return;
+    }
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (response.status === 429) {
+        const minutes = Math.ceil((payload.retry_after_seconds || 0) / 60);
+        setAdminMessage(`시도가 너무 많습니다. ${minutes}분 뒤에 다시 해주세요.`, true);
+      } else if (response.status === 401) {
+        setAdminMessage("현재 비밀번호가 맞지 않습니다.", true);
+      } else {
+        setAdminMessage(payload.error || "변경하지 못했습니다.", true);
+      }
+      return;
+    }
+
+    // 들고 있던 값이 낡았으므로 새 것으로 갈아 끼운다. 안 그러면 다음
+    // 영상 추가에서 401 이 나고 로그인 화면으로 튕긴다.
+    state.adminPasscode = next;
+    clearPasscodeFields();
+    adminPasscodeFields.hidden = true;
+    adminPasscodeToggle.setAttribute("aria-expanded", "false");
+    setAdminMessage("비밀번호를 변경했습니다.", false);
   }
 
   async function handleVideoSubmit(event) {
@@ -4105,6 +4227,13 @@ APP_JS = """(() => {
   });
   adminLoginForm.addEventListener("submit", handleAdminLogin);
   adminVideoForm.addEventListener("submit", handleVideoSubmit);
+  adminPasscodeForm.addEventListener("submit", handlePasscodeChange);
+  adminPasscodeToggle.addEventListener("click", () => {
+    const open = adminPasscodeFields.hidden;
+    adminPasscodeFields.hidden = !open;
+    adminPasscodeToggle.setAttribute("aria-expanded", String(open));
+    if (open) currentPasscode.focus(); else clearPasscodeFields();
+  });
 
   videoModalClose.addEventListener("click", closeVideoModal);
   videoModal.addEventListener("click", (event) => {

@@ -65,3 +65,19 @@ CREATE TABLE IF NOT EXISTS auth_attempts (
   blocked_until INTEGER NOT NULL DEFAULT 0,  -- epoch ms
   updated_at    INTEGER NOT NULL
 );
+
+-- 런타임에 바뀌는 설정값.
+--
+-- 관리자 비번이 여기 산다. Pages Secret 에 두면 Function 이 바꿀 수 없어서
+-- (시크릿은 배포 시점에만 쓰인다) 사이트에서 변경하려면 D1 로 내려와야 했다.
+--
+-- ADMIN_PASSCODE 시크릿은 부트스트랩으로만 남는다: 이 표에 행이 없을 때만
+-- 쓰이고, 한 번 변경하면 그 뒤로는 무시된다. 새 비번을 잊었다면 이 행을
+-- 지워서 시크릿으로 되돌아갈 수 있다 —
+--   wrangler d1 execute papa_pjh --remote --command \
+--     "DELETE FROM settings WHERE key='admin_passcode'"
+CREATE TABLE IF NOT EXISTS settings (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);

@@ -39,15 +39,76 @@ function constantTimeEqual(a, b) {
   return diff === 0;
 }
 
+const PASSCODE_KEY = "admin_passcode";
+const PBKDF2_ITERATIONS = 150_000;
+
+const toB64 = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes)));
+const fromB64 = (text) => Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
+
+/**
+ * 비번을 PBKDF2 로 늘려 저장형 문자열로 만든다.
+ *
+ * 6자리 숫자는 경우의 수가 100만뿐이라 단순 해시로는 D1 이 새는 순간 바로
+ * 역산된다. 늘려 둔다고 안전해지지는 않지만, 오프라인 역산 비용이 올라가고
+ * 온라인 시도는 아래 잠금이 막는다.
+ */
+export async function hashPasscode(passcode) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const key = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(passcode), "PBKDF2", false, ["deriveBits"],
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", salt, iterations: PBKDF2_ITERATIONS, hash: "SHA-256" }, key, 256,
+  );
+  return `pbkdf2$${PBKDF2_ITERATIONS}$${toB64(salt)}$${toB64(bits)}`;
+}
+
+async function verifyPasscode(passcode, stored) {
+  const [scheme, iterations, salt, expected] = String(stored).split("$");
+  if (scheme !== "pbkdf2") return false;
+  const key = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(passcode), "PBKDF2", false, ["deriveBits"],
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", salt: fromB64(salt), iterations: Number(iterations), hash: "SHA-256" },
+    key, 256,
+  );
+  return constantTimeEqual(toB64(bits), expected);
+}
+
+/** 저장된 비번 해시. 아직 한 번도 바꾸지 않았으면 null. */
+export async function storedPasscode(env) {
+  const row = await env.DB
+    .prepare("SELECT value FROM settings WHERE key = ?")
+    .bind(PASSCODE_KEY)
+    .first();
+  return row?.value ?? null;
+}
+
+export async function savePasscode(env, passcode) {
+  await env.DB
+    .prepare(
+      `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+    )
+    .bind(PASSCODE_KEY, await hashPasscode(passcode), Date.now())
+    .run();
+}
+
 /**
  * 관리자 비번 확인. 통과하면 null, 막히면 그대로 돌려줄 Response.
+ *
+ * 비번은 settings 표의 해시가 우선이고, 그 행이 없을 때만 ADMIN_PASSCODE
+ * 시크릿을 쓴다. 즉 시크릿은 최초 1회 부트스트랩용이고, 한 번 변경하면
+ * 그 뒤로는 쓰이지 않는다.
  *
  * 실패가 쌓인 IP 는 잠시 막는다. 막힌 동안에는 비번이 맞아도 통과시키지
  * 않는다 — 맞았는지 알려 주는 것 자체가 탐색을 도와주기 때문이다.
  */
 export async function requireAdmin(request, env, body) {
-  if (!env.ADMIN_PASSCODE) {
-    return json({ error: "server is missing ADMIN_PASSCODE" }, 500);
+  const stored = await storedPasscode(env);
+  if (!stored && !env.ADMIN_PASSCODE) {
+    return json({ error: "server has no admin passcode configured" }, 500);
   }
 
   const ip = clientIp(request);
@@ -66,7 +127,12 @@ export async function requireAdmin(request, env, body) {
     );
   }
 
-  if (constantTimeEqual(String(body?.passcode ?? ""), env.ADMIN_PASSCODE)) {
+  const candidate = String(body?.passcode ?? "");
+  const ok = stored
+    ? await verifyPasscode(candidate, stored)
+    : constantTimeEqual(candidate, env.ADMIN_PASSCODE);
+
+  if (ok) {
     if (row) {
       await env.DB.prepare("DELETE FROM auth_attempts WHERE ip = ?").bind(ip).run();
     }
