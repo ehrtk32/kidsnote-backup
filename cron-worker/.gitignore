@@ -1,0 +1,4 @@
+# wrangler dev 용 로컬 시크릿. 절대 커밋하지 말 것.
+.dev.vars
+.wrangler/
+node_modules/
