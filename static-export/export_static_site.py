@@ -758,6 +758,8 @@ INDEX_HTML = """<!doctype html>
       <nav class="tabs" id="tabs" aria-label="키즈노트 메뉴"></nav>
       <footer class="sidebar-footer">
         <div class="sync-meta" id="syncMeta">동기화 확인 중</div>
+        <button class="admin-hotspot admin-hotspot-desktop" id="adminHotspotDesktop"
+                type="button" tabindex="-1" aria-hidden="true"></button>
       </footer>
     </aside>
 
@@ -767,10 +769,7 @@ INDEX_HTML = """<!doctype html>
           <p class="content-eyebrow" id="pageEyebrow"></p>
           <h2 class="content-title" id="pageTitle">홈</h2>
         </div>
-        <div class="content-actions">
-          <button class="filter-toggle-button" id="filterToggle" type="button" aria-expanded="false" aria-controls="filterTools">필터 목록 열기</button>
-          <button class="admin-button" id="adminButton" type="button" aria-label="관리자 모드">관리자</button>
-        </div>
+        <button class="filter-toggle-button" id="filterToggle" type="button" aria-expanded="false" aria-controls="filterTools">필터 목록 열기</button>
       </header>
       <section class="tools" id="filterTools" aria-label="검색과 필터" hidden>
         <label class="search-box">
@@ -820,6 +819,8 @@ INDEX_HTML = """<!doctype html>
     </figure>
     <button class="lightbox-nav lightbox-next" type="button" aria-label="다음 사진">&#8250;</button>
   </div>
+  <button class="admin-hotspot admin-hotspot-mobile" id="adminHotspotMobile"
+          type="button" tabindex="-1" aria-hidden="true"></button>
   <div class="admin-modal" id="adminModal" hidden role="dialog" aria-modal="true" aria-labelledby="adminModalTitle">
     <div class="admin-panel">
       <header class="admin-head">
@@ -2064,25 +2065,50 @@ body:not(.locked) .passcode-screen {
 }
 
 /* ---------- 관리자 모드 ---------- */
-.content-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+/* 관리자 진입은 눈에 보이지 않는다. 가족이 매일 보는 화면에 쓸 일 없는
+   버튼을 두지 않으려는 것이고, 비밀번호는 어차피 서버가 확인하므로
+   숨김 자체가 보안은 아니다.
+
+   aria-hidden + tabindex=-1 로 스크린리더와 탭 이동에서도 빼 둔다. 그래서
+   키보드만으로는 열 수 없다 — 필요해지면 키 조합을 따로 붙여야 한다. */
+.admin-hotspot {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  -webkit-tap-highlight-color: transparent;
+  cursor: default;
 }
 
-.admin-button {
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 7px 12px;
-  background: var(--surface);
-  color: var(--muted);
-  font-size: 13px;
-  cursor: pointer;
+/* PC: 사이드바 하단(동기화 시각 줄) 전체가 눌림 */
+.admin-hotspot-desktop {
+  position: absolute;
+  inset: 0;
 }
 
-.admin-button:hover {
-  border-color: var(--accent);
-  color: var(--accent-strong);
+.sidebar-footer {
+  position: relative;
+}
+
+.admin-hotspot-mobile {
+  display: none;
+}
+
+@media (max-width: 860px) {
+  /* 모바일: 사이드바 푸터가 숨겨지므로 화면 우상단 모서리를 쓴다.
+     상단 바 위에 떠 있어야 해서 z-index 를 사이드바보다 높게 잡는다. */
+  .admin-hotspot-desktop {
+    display: none;
+  }
+
+  .admin-hotspot-mobile {
+    display: block;
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: 56px;
+    height: 56px;
+    z-index: 30;
+  }
 }
 
 .admin-modal[hidden] {
@@ -2797,7 +2823,10 @@ APP_JS = """(() => {
   const profileName = document.getElementById("profileName");
   const profileMeta = document.getElementById("profileMeta");
   const childSwitch = document.getElementById("childSwitch");
-  const adminButton = document.getElementById("adminButton");
+  const adminHotspots = [
+    document.getElementById("adminHotspotDesktop"),
+    document.getElementById("adminHotspotMobile"),
+  ];
   const adminModal = document.getElementById("adminModal");
   const adminClose = document.querySelector(".admin-close");
   const adminLoginForm = document.getElementById("adminLoginForm");
@@ -4220,7 +4249,7 @@ APP_JS = """(() => {
     openVideoModal(card.dataset.videoId);
   });
 
-  adminButton.addEventListener("click", openAdminModal);
+  adminHotspots.forEach((spot) => spot.addEventListener("click", openAdminModal));
   adminClose.addEventListener("click", closeAdminModal);
   adminModal.addEventListener("click", (event) => {
     if (event.target === adminModal) closeAdminModal();
