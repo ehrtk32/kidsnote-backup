@@ -1,22 +1,21 @@
 /**
- * 사진 좋아요.
+ * 사진 좋아요 — 누른 횟수를 센다.
  *
- *   GET  /api/likes?post=123        한 글의 사진별 집계 (+ 내가 누른 것)
- *   GET  /api/likes?top=100         좋아요 많은 순 (사진 모아보기용)
- *   POST /api/likes                 { photo_id, post_id, child, voter } 토글
+ *   GET  /api/likes?post=123     한 글의 사진별 횟수
+ *   GET  /api/likes?top=500      많이 눌린 순 (사진 모아보기용)
+ *   POST /api/likes              { photo_id, post_id, child }  →  +1
  *
- * photo_id 는 사진의 경로다. media_url() 이 report id 와 글 안에서의 순서
- * 만으로 파일 이름을 짓기 때문에 재-export 해도 바뀌지 않는다. 그래서 별도
- * 식별자 체계가 필요 없다.
- *
- * voter 는 브라우저가 localStorage 에 만드는 랜덤 문자열이다. 같은 사람이
- * 두 번 누르는 걸 막는 용도일 뿐 위조는 막지 못한다 — 쓰기를 열어 둔
- * 사이트라 그 이상은 의도적으로 하지 않는다.
+ * 사람당 한 번이 아니다. 로그인이 없으니 "같은 사람"을 알 방법이 없고,
+ * 브라우저 단위로 묶어도 한 사람이 폰과 노트북에서 누르면 둘로, 거실
+ * 태블릿을 온 가족이 쓰면 하나로 센다. 어느 쪽도 사람 수가 아니라서,
+ * 숫자의 뜻을 "몇 번 눌렸나"로 정했다 — 마음에 들면 여러 번 눌러도 되는
+ * 버튼이고, 그래서 되돌리기도 없다.
  */
 import {
   json,
   badRequest,
   readJson,
+  clientIp,
   normalizeChild,
   normalizeText,
   CHILD_KEYS,
@@ -24,19 +23,23 @@ import {
 
 const MAX_TOP = 500;
 
+// 한 IP 가 1분에 올릴 수 있는 횟수. 여러 번 누르는 것이 기능이므로 넉넉
+// 하지만, 스크립트로 수천을 꽂는 것과는 자릿수가 다르다.
+const RATE_WINDOW_MS = 60_000;
+const RATE_MAX = 120;
+
 export async function onRequestGet({ request, env }) {
   const url = new URL(request.url);
-  const voter = normalizeText(url.searchParams.get("voter"), 64);
 
   const topParam = url.searchParams.get("top");
   if (topParam !== null) {
     const limit = Math.min(Math.max(Number(topParam) || 100, 1), MAX_TOP);
     const { results } = await env.DB
       .prepare(
-        `SELECT photo_id, post_id, child, COUNT(*) AS likes
-           FROM likes
-          GROUP BY photo_id
-          ORDER BY likes DESC, MAX(created_at) DESC
+        `SELECT photo_id, post_id, child, count
+           FROM photo_likes
+          WHERE count > 0
+          ORDER BY count DESC, updated_at DESC
           LIMIT ?`,
       )
       .bind(limit)
@@ -48,22 +51,12 @@ export async function onRequestGet({ request, env }) {
   if (!postId) return badRequest("post or top is required");
 
   const { results } = await env.DB
-    .prepare(
-      `SELECT photo_id,
-              COUNT(*) AS likes,
-              SUM(CASE WHEN voter = ? THEN 1 ELSE 0 END) AS mine
-         FROM likes
-        WHERE post_id = ?
-        GROUP BY photo_id`,
-    )
-    .bind(voter, postId)
+    .prepare("SELECT photo_id, count FROM photo_likes WHERE post_id = ?")
+    .bind(postId)
     .all();
 
-  // 프런트가 다루기 쉽도록 photo_id 를 키로 돌려준다.
   const photos = {};
-  for (const row of results) {
-    photos[row.photo_id] = { likes: row.likes, mine: row.mine > 0 };
-  }
+  for (const row of results) photos[row.photo_id] = { count: row.count };
   return json({ photos });
 }
 
@@ -74,41 +67,52 @@ export async function onRequestPost({ request, env }) {
   const photoId = normalizeText(payload.photo_id, 400);
   if (!photoId) return badRequest("photo_id is required");
 
-  const voter = normalizeText(payload.voter, 64);
-  if (!voter) return badRequest("voter is required");
-
   const child = normalizeChild(payload.child);
   if (!child) return badRequest(`child must be one of ${CHILD_KEYS.join(", ")}`);
 
   const postId = normalizeText(payload.post_id, 100);
+  const now = Date.now();
 
-  // 토글. 이미 있으면 지우고, 없으면 넣는다. 눌린 상태를 클라이언트가
-  // 알려 주게 하면 두 번 눌렀을 때 어긋나므로 서버가 현재 상태로 판단한다.
-  const existing = await env.DB
-    .prepare("SELECT 1 FROM likes WHERE photo_id = ? AND voter = ?")
-    .bind(photoId, voter)
+  // 댓글 쪽과 같은 카운터 표를 쓴다. ip 를 키로 창을 들고 있는 표가 이미
+  // 있는데 세 번째를 만들 이유가 없다.
+  const bucketKey = `like:${clientIp(request)}`;
+  const bucket = await env.DB
+    .prepare("SELECT fails, blocked_until FROM auth_attempts WHERE ip = ?")
+    .bind(bucketKey)
     .first();
 
-  if (existing) {
-    await env.DB
-      .prepare("DELETE FROM likes WHERE photo_id = ? AND voter = ?")
-      .bind(photoId, voter)
-      .run();
-  } else {
-    await env.DB
-      .prepare(
-        `INSERT INTO likes (photo_id, voter, child, post_id, created_at)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(photo_id, voter) DO NOTHING`,
-      )
-      .bind(photoId, voter, child, postId, Date.now())
-      .run();
+  if (bucket && bucket.blocked_until > now && bucket.fails >= RATE_MAX) {
+    return json(
+      {
+        error: "too many likes",
+        retry_after_seconds: Math.ceil((bucket.blocked_until - now) / 1000),
+      },
+      429,
+    );
   }
 
-  const row = await env.DB
-    .prepare("SELECT COUNT(*) AS likes FROM likes WHERE photo_id = ?")
-    .bind(photoId)
-    .first();
+  const [, , row] = await env.DB.batch([
+    env.DB
+      .prepare(
+        `INSERT INTO photo_likes (photo_id, child, post_id, count, updated_at)
+         VALUES (?, ?, ?, 1, ?)
+         ON CONFLICT(photo_id) DO UPDATE SET
+           count = photo_likes.count + 1,
+           updated_at = excluded.updated_at`,
+      )
+      .bind(photoId, child, postId, now),
+    env.DB
+      .prepare(
+        `INSERT INTO auth_attempts (ip, fails, blocked_until, updated_at)
+         VALUES (?, 1, ?, ?)
+         ON CONFLICT(ip) DO UPDATE SET
+           fails = CASE WHEN auth_attempts.blocked_until > ? THEN auth_attempts.fails + 1 ELSE 1 END,
+           blocked_until = CASE WHEN auth_attempts.blocked_until > ? THEN auth_attempts.blocked_until ELSE ? END,
+           updated_at = ?`,
+      )
+      .bind(bucketKey, now + RATE_WINDOW_MS, now, now, now, now + RATE_WINDOW_MS, now),
+    env.DB.prepare("SELECT count FROM photo_likes WHERE photo_id = ?").bind(photoId),
+  ]);
 
-  return json({ ok: true, photo_id: photoId, likes: row?.likes ?? 0, mine: !existing });
+  return json({ ok: true, photo_id: photoId, count: row.results?.[0]?.count ?? 1 });
 }

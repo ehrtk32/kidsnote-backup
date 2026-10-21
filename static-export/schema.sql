@@ -37,30 +37,28 @@ CREATE TABLE IF NOT EXISTS comments (
 CREATE INDEX IF NOT EXISTS ix_comments_target
   ON comments (target_type, target_id, created_at);
 
-CREATE TABLE IF NOT EXISTS likes (
-  -- 사진의 정체성은 파일 경로다. media_url() 이 report id 와 글 안에서의
-  -- 순서만으로 이름을 짓기 때문에 재-export 해도 바뀌지 않는다.
-  --   /wp-content/uploads/2026/10/kidsnote-1393764239-image-2.jpg
-  photo_id    TEXT NOT NULL,
-  -- 브라우저가 localStorage 에 만드는 랜덤 id. 같은 사람이 두 번 누르는 걸
-  -- 막는 용도일 뿐이고, 위조를 막지는 못한다 — 쓰기를 열어둔 사이트라
-  -- 그 이상은 의도적으로 하지 않는다.
-  voter       TEXT NOT NULL,
-  child       TEXT NOT NULL,
-  post_id     TEXT NOT NULL DEFAULT '',
-  created_at  INTEGER NOT NULL,
-  PRIMARY KEY (photo_id, voter)
+-- 사진 좋아요.
+--
+-- 사람당 한 번이 아니라 누른 횟수를 센다. 로그인이 없어서 "같은 사람"을
+-- 알 수 있는 방법이 없고, 브라우저 단위로 묶어 봐야 한 사람이 폰과 노트북
+-- 에서 누르면 둘로 세고 거실 태블릿을 온 가족이 쓰면 하나로 센다. 그래서
+-- 숫자의 뜻을 "몇 명이 좋아하나"의 근사치가 아니라 "몇 번 눌렸나"로 정했다.
+-- 마음에 들면 여러 번 눌러도 되는 버튼이다.
+--
+-- photo_id 는 사진의 경로다. media_url() 이 report id 와 글 안에서의 순서
+-- 만으로 파일 이름을 짓기 때문에 재-export 해도 바뀌지 않는다.
+CREATE TABLE IF NOT EXISTS photo_likes (
+  photo_id   TEXT PRIMARY KEY,
+  child      TEXT NOT NULL,
+  post_id    TEXT NOT NULL DEFAULT '',
+  count      INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS ix_likes_photo ON likes (photo_id);
-CREATE INDEX IF NOT EXISTS ix_likes_child ON likes (child, created_at DESC);
+-- 모아보기의 "좋아요순" 정렬이 이 인덱스를 탄다.
+CREATE INDEX IF NOT EXISTS ix_photo_likes_rank ON photo_likes (count DESC);
+CREATE INDEX IF NOT EXISTS ix_photo_likes_post ON photo_likes (post_id);
 
--- 관리자 비번 무차별 대입 방어.
---
--- 6자리 숫자는 경우의 수가 100만뿐이라, 제한이 없으면 스크립트로 몇 분이면
--- 뚫린다. 서버에서 검증한다는 사실만으로는 부족하다. IP 당 몇 번 틀리면
--- 잠시 막는 정도면 현실적으로 불가능해진다 — 지켜야 할 것이 "영상 링크 한
--- 줄"이라 그 이상은 과하다.
 CREATE TABLE IF NOT EXISTS auth_attempts (
   ip            TEXT PRIMARY KEY,
   fails         INTEGER NOT NULL DEFAULT 0,

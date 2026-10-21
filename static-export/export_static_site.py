@@ -1892,9 +1892,22 @@ body:not(.locked) .passcode-screen {
   transform: scale(.94);
 }
 
-.like-button.is-liked {
-  background: var(--danger);
-  color: #fff;
+.thumb-icon {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
+/* 되돌리기가 없으니 "눌린 상태"가 없다. 대신 누를 때마다 한 번 튀어서
+   연타해도 반응이 보이게 한다. */
+.like-button.is-bumped {
+  animation: like-bump .32s ease;
+}
+
+@keyframes like-bump {
+  0%   { transform: scale(1); }
+  35%  { transform: scale(1.22); background: var(--accent); color: #fff; }
+  100% { transform: scale(1); }
 }
 
 .like-count {
@@ -2615,15 +2628,20 @@ APP_JS = """(() => {
   const PHOTOS_TYPE = "photos";
   const PHOTO_PAGE = 120;
 
-  // 좋아요를 누른 사람을 구분하는 브라우저 로컬 id. 같은 사람이 두 번
-  // 누르는 걸 막기 위한 것이고, 신원 확인이 아니다.
-  function voterId() {
-    let id = window.localStorage.getItem("kidsnote.voter");
-    if (!id) {
-      id = (crypto.randomUUID?.() || String(Math.random()).slice(2)).replaceAll("-", "");
-      window.localStorage.setItem("kidsnote.voter", id);
-    }
-    return id;
+  // 좋아요 아이콘. currentColor 라 버튼 색을 그대로 따라간다.
+  const THUMB_ICON = (
+    '<svg class="thumb-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">'
+    + '<path d="M7 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h3v12Zm2-12.2 4.2-7A2 2 0 0 1 17 3.8'
+    + 'l-.9 4.5a1 1 0 0 0 1 1.2h3.2a2.5 2.5 0 0 1 2.4 3.1l-1.8 7A2.5 2.5 0 0 1 18.5 22H9V9.8Z"/>'
+    + "</svg>"
+  );
+
+  function likeButtonHtml(src, postId, count) {
+    return (
+      `<button class="like-button" type="button" data-photo-src="${escapeHtml(src)}"`
+      + ` data-post-id="${escapeHtml(String(postId))}" aria-label="좋아요">`
+      + `${THUMB_ICON}<span class="like-count">${count || ""}</span></button>`
+    );
   }
   const LIGHTBOX_MIN_ZOOM = 1;
   const LIGHTBOX_MAX_ZOOM = 4;
@@ -2649,7 +2667,7 @@ APP_JS = """(() => {
     videosLoaded: false,
     photos: [],
     photosLoaded: false,
-    photoLikes: {},
+    photoLikes: {},   // photo_id → 누른 횟수
     photoSort: window.localStorage.getItem("kidsnote.photoSort") || "date",
     photoLimit: PHOTO_PAGE,
     adminPasscode: "",
@@ -3330,10 +3348,17 @@ APP_JS = """(() => {
   }
 
   // ---- 사진 좋아요 ----
-  async function toggleLike(button) {
+  // 되돌리기가 없다. 마음에 들면 여러 번 눌러도 되는 버튼이라, 누를 때마다
+  // 서버 카운터가 1씩 올라간다.
+  async function bumpLike(button) {
     const photoSrc = button.dataset.photoSrc;
-    if (!photoSrc || button.disabled) return;
-    button.disabled = true;
+    if (!photoSrc) return;
+
+    // 응답을 기다리는 동안에도 눌린 느낌이 나야 연타가 어색하지 않다.
+    button.classList.remove("is-bumped");
+    void button.offsetWidth;   // 애니메이션 재시작
+    button.classList.add("is-bumped");
+
     try {
       const response = await fetch("/api/likes", {
         method: "POST",
@@ -3342,21 +3367,19 @@ APP_JS = """(() => {
           photo_id: photoSrc,
           post_id: button.dataset.postId || "",
           child: state.activeChild,
-          voter: voterId(),
         }),
       });
       const ctype = response.headers.get("content-type") || "";
       if (!response.ok || !ctype.includes("application/json")) return;
       const payload = await response.json();
-      state.photoLikes[photoSrc] = { likes: payload.likes, mine: payload.mine };
+      state.photoLikes[photoSrc] = payload.count;
       // 같은 사진이 상세와 모아보기에 동시에 떠 있을 수 있다.
       document.querySelectorAll(`[data-photo-src="${CSS.escape(photoSrc)}"]`).forEach((node) => {
-        node.classList.toggle("is-liked", payload.mine);
         const count = node.querySelector(".like-count");
-        if (count) count.textContent = payload.likes || "";
+        if (count) count.textContent = payload.count || "";
       });
-    } finally {
-      button.disabled = false;
+    } catch {
+      // 네트워크가 끊겼어도 버튼은 계속 눌러진다. 다음 로드에서 맞춰진다.
     }
   }
 
@@ -3368,14 +3391,9 @@ APP_JS = """(() => {
     if (!figures.length) return;
 
     function makeLikeButton(src) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "like-button";
-      button.dataset.photoSrc = src;
-      button.dataset.postId = String(post.id);
-      button.setAttribute("aria-label", "좋아요");
-      button.innerHTML = '<span aria-hidden="true">♥</span><span class="like-count"></span>';
-      return button;
+      const holder = document.createElement("div");
+      holder.innerHTML = likeButtonHtml(src, post.id, state.photoLikes[src] || 0);
+      return holder.firstElementChild;
     }
 
     const gallery = content.querySelector(".album-gallery");
@@ -3404,18 +3422,15 @@ APP_JS = """(() => {
     }
 
     try {
-      const response = await fetch(
-        `/api/likes?post=${encodeURIComponent(post.id)}&voter=${encodeURIComponent(voterId())}`,
-      );
+      const response = await fetch(`/api/likes?post=${encodeURIComponent(post.id)}`);
       const ctype = response.headers.get("content-type") || "";
       if (!response.ok || !ctype.includes("application/json")) return;
       const payload = await response.json();
       for (const [src, info] of Object.entries(payload.photos || {})) {
-        state.photoLikes[src] = info;
+        state.photoLikes[src] = info.count;
         content.querySelectorAll(`[data-photo-src="${CSS.escape(src)}"]`).forEach((node) => {
-          node.classList.toggle("is-liked", info.mine);
           const count = node.querySelector(".like-count");
-          if (count) count.textContent = info.likes || "";
+          if (count) count.textContent = info.count || "";
         });
       }
     } catch {
@@ -3849,16 +3864,15 @@ APP_JS = """(() => {
     }
   }
 
-  /** 좋아요 많은 순 집계를 받아 photoLikes 에 합친다. 실패해도 목록은 보인다. */
+  /** 많이 눌린 순 집계를 받아 photoLikes 에 합친다. 실패해도 목록은 보인다. */
   async function loadTopLikes() {
     try {
-      const response = await fetch(`/api/likes?top=500&voter=${encodeURIComponent(voterId())}`);
+      const response = await fetch("/api/likes?top=500");
       const type = response.headers.get("content-type") || "";
       if (!response.ok || !type.includes("application/json")) return;
       const payload = await response.json();
       for (const row of payload.photos || []) {
-        const prev = state.photoLikes[row.photo_id] || {};
-        state.photoLikes[row.photo_id] = { likes: row.likes, mine: prev.mine || false };
+        state.photoLikes[row.photo_id] = row.count;
       }
     } catch {
       // 좋아요 수가 없어도 사진은 보여야 한다.
@@ -3878,8 +3892,8 @@ APP_JS = """(() => {
     });
     if (state.photoSort === "likes") {
       list = [...list].sort((a, b) => {
-        const la = state.photoLikes[a.src]?.likes || 0;
-        const lb = state.photoLikes[b.src]?.likes || 0;
+        const la = state.photoLikes[a.src] || 0;
+        const lb = state.photoLikes[b.src] || 0;
         if (lb !== la) return lb - la;
         return String(b.date).localeCompare(String(a.date));
       });
@@ -3904,19 +3918,13 @@ APP_JS = """(() => {
     }
 
     const shown = photos.slice(0, state.photoLimit);
-    const cards = shown.map((photo, index) => {
-      const like = state.photoLikes[photo.src] || { likes: 0, mine: false };
-      return (
-        `<figure class="photo-cell" data-photo-index="${index}">`
-        + `<img src="${escapeHtml(photo.src)}" alt="${escapeHtml(photo.caption || "")}" loading="lazy">`
-        + `<button class="like-button${like.mine ? " is-liked" : ""}" type="button"`
-        + ` data-photo-src="${escapeHtml(photo.src)}" data-post-id="${escapeHtml(String(photo.post_id))}"`
-        + ` aria-label="좋아요"><span aria-hidden="true">♥</span>`
-        + `<span class="like-count">${like.likes || ""}</span></button>`
-        + `<figcaption>${escapeHtml(photo.date || "")}</figcaption>`
-        + "</figure>"
-      );
-    }).join("");
+    const cards = shown.map((photo, index) => (
+      `<figure class="photo-cell" data-photo-index="${index}">`
+      + `<img src="${escapeHtml(photo.src)}" alt="${escapeHtml(photo.caption || "")}" loading="lazy">`
+      + likeButtonHtml(photo.src, photo.post_id, state.photoLikes[photo.src] || 0)
+      + `<figcaption>${escapeHtml(photo.date || "")}</figcaption>`
+      + "</figure>"
+    )).join("");
 
     const more = photos.length > shown.length
       ? `<button class="photo-more" type="button" id="photoMore">더 보기 (${photos.length - shown.length}장 남음)</button>`
@@ -4025,7 +4033,7 @@ APP_JS = """(() => {
     const like = event.target.closest(".like-button");
     if (like) {
       event.preventDefault();
-      toggleLike(like);
+      bumpLike(like);
       return;
     }
 
@@ -4096,7 +4104,7 @@ APP_JS = """(() => {
     if (like) {
       event.preventDefault();
       event.stopPropagation();
-      toggleLike(like);
+      bumpLike(like);
       return;
     }
     const target = event.target.closest("[data-gallery-index]");
