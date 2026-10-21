@@ -318,10 +318,15 @@ class StaticRenderer:
         self.first_image_url = ""
         self.missing_media: list[str] = []
         self.used_media_paths: set[Path] = set()
+        # 사진 모아보기와 좋아요가 쓰는 전체 사진 목록. 사진은 본문 HTML
+        # 안에만 있어서, 렌더링하면서 같이 모아 두지 않으면 나중에 다시
+        # 파싱해야 한다.
+        self.page_images: list[dict[str, Any]] = []
 
     def render_page(self, page: NotionPage) -> tuple[str, str]:
         self.media_indexes = {}
         self.first_image_url = ""
+        self.page_images = []
         blocks = self.notion.children(page.page_id)
         content = self.render_blocks(blocks, page)
         return content, self.first_image_url
@@ -417,6 +422,9 @@ class StaticRenderer:
         if kind == "image":
             if not self.first_image_url:
                 self.first_image_url = target_url
+            # 좋아요는 이 경로를 photo_id 로 쓴다. report id 와 글 안에서의
+            # 순서로만 정해지므로 재-export 해도 같은 값이 나온다.
+            self.page_images.append({"src": target_url, "caption": caption})
             caption_html = f"<figcaption>{html.escape(caption)}</figcaption>" if caption else ""
             return (
                 "<figure>"
@@ -524,7 +532,11 @@ def clean_generated_data(out_dir: Path) -> None:
     for path in (out_dir / "data/posts", out_dir / "posts"):
         if path.exists():
             shutil.rmtree(path)
-    for path in (out_dir / "data/posts.json", out_dir / "export-report.json"):
+    for path in (
+        out_dir / "data/posts.json",
+        out_dir / "data/photos.json",
+        out_dir / "export-report.json",
+    ):
         if path.exists():
             path.unlink()
 
@@ -589,6 +601,7 @@ def main() -> int:
     renderer = StaticRenderer(notion, out_dir, download_media=not args.skip_media)
 
     posts: list[dict[str, Any]] = []
+    photos: list[dict[str, Any]] = []
     for index, page in enumerate(pages, start=1):
         print(f"[{index}/{len(pages)}] export {page.report_id}: {page.title}", flush=True)
         content, thumbnail_url = renderer.render_page(page)
@@ -606,6 +619,18 @@ def main() -> int:
         }
         posts.append(summary)
 
+        for image in renderer.page_images:
+            entry = {
+                "post_id": page.report_id,
+                "child": DEFAULT_CHILD,
+                "src": image["src"],
+                "date": summary["date"],
+                "type": ptype,
+            }
+            if image["caption"]:
+                entry["caption"] = image["caption"]
+            photos.append(entry)
+
         detail = dict(summary)
         detail["content"] = content
         write_text(out_dir / f"data/posts/{page.report_id}.json", json.dumps(detail, ensure_ascii=False, separators=(",", ":")))
@@ -622,6 +647,17 @@ def main() -> int:
         "posts": posts,
     }
     write_text(out_dir / "data/posts.json", json.dumps(manifest, ensure_ascii=False, separators=(",", ":")))
+
+    # 사진 모아보기용 전체 인덱스. 좋아요 수는 D1 에서 따로 가져와 합친다 —
+    # 여기 넣으면 cron 이 다시 쓸 때마다 사람이 누른 것이 사라진다.
+    write_text(
+        out_dir / "data/photos.json",
+        json.dumps(
+            {"count": len(photos), "photos": photos},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+    )
     write_post_routes(out_dir, posts, index_html)
 
     pruned_media_count = prune_unused_media(out_dir, renderer.used_media_paths)
@@ -631,6 +667,7 @@ def main() -> int:
         "missing_media_count": len(renderer.missing_media),
         "missing_media": renderer.missing_media[:50],
         "pruned_media_count": pruned_media_count,
+        "photo_count": len(photos),
         **stats,
     }
     write_text(out_dir / "export-report.json", json.dumps(report, ensure_ascii=False, indent=2))
@@ -783,6 +820,7 @@ INDEX_HTML = """<!doctype html>
         <button class="video-modal-close" type="button" aria-label="닫기">&times;</button>
       </header>
       <div class="video-modal-frame" id="videoModalFrame"></div>
+      <div class="video-modal-comments" id="videoComments"></div>
       <footer class="video-modal-foot">
         <a id="videoModalLink" href="#" target="_blank" rel="noopener noreferrer">새 창에서 열기 ↗</a>
       </footer>
@@ -1734,6 +1772,234 @@ body:not(.locked) .passcode-screen {
   background: var(--video);
 }
 
+/* ---------- 댓글 ---------- */
+.comments {
+  margin-top: 28px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.comments-title {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.comments-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.comment {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--surface-soft);
+}
+
+.comment-body {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.comment-time {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.comment-form {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.comment-form textarea {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 9px 11px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+  background: var(--surface);
+  resize: vertical;
+}
+
+.comment-form textarea:focus {
+  outline: 2px solid var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.comment-form button {
+  flex: none;
+  align-self: flex-end;
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 16px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.comment-form button:disabled {
+  opacity: .6;
+  cursor: default;
+}
+
+.comment-message {
+  margin: 8px 0 0;
+  min-height: 16px;
+  font-size: 13px;
+  color: var(--danger);
+}
+
+/* ---------- 좋아요 ---------- */
+.detail-content figure.has-like {
+  position: relative;
+}
+
+.like-button {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  border-radius: 999px;
+  padding: 6px 11px;
+  background: rgba(16, 18, 17, .55);
+  color: rgba(255, 255, 255, .85);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease, transform .1s ease;
+}
+
+.like-button:hover {
+  background: rgba(16, 18, 17, .75);
+}
+
+.like-button:active {
+  transform: scale(.94);
+}
+
+.like-button.is-liked {
+  background: var(--danger);
+  color: #fff;
+}
+
+.like-count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+
+.gallery-cell {
+  position: relative;
+  display: inline-grid;
+}
+
+/* ---------- 사진 모아보기 ---------- */
+.photo-tools {
+  display: flex;
+  gap: 6px;
+  padding: 12px 14px 0;
+}
+
+.photo-sort {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 5px 13px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.photo-sort.is-active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  font-weight: 650;
+}
+
+.photo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+  padding: 12px 14px;
+}
+
+.photo-cell {
+  position: relative;
+  margin: 0;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--surface-soft);
+  cursor: zoom-in;
+}
+
+.photo-cell img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+}
+
+.photo-cell figcaption {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(16, 18, 17, .55);
+  color: rgba(255, 255, 255, .9);
+  font-size: 11px;
+}
+
+.photo-cell .like-button {
+  right: 8px;
+  bottom: 8px;
+  padding: 5px 9px;
+  font-size: 12px;
+}
+
+.photo-more {
+  display: block;
+  width: calc(100% - 28px);
+  margin: 0 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 11px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.photo-more:hover {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+.video-modal-comments:not(:empty) {
+  padding: 0 16px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.video-modal-comments .comments {
+  margin-top: 14px;
+}
+
 /* ---------- 관리자 모드 ---------- */
 .content-actions {
   display: flex;
@@ -2339,11 +2605,26 @@ APP_JS = """(() => {
     { key: "album", label: "앨범", icon: "/assets/album.svg" },
     { key: "announcement", label: "공지", icon: "/assets/announcement.svg" },
     { key: "video", label: "영상", icon: "/assets/video.svg" },
+    { key: "photos", label: "사진", icon: "/assets/photos.svg" },
   ];
   // Videos are not Notion posts: no detail route, no NEW pill, no month
   // filter. The tab reuses the list panel but takes its items from a
   // separate manifest, so every list path branches on this.
   const VIDEO_TYPE = "video";
+  // 사진 모아보기. 글 목록이 아니라 사진 단위라 목록 경로가 또 갈린다.
+  const PHOTOS_TYPE = "photos";
+  const PHOTO_PAGE = 120;
+
+  // 좋아요를 누른 사람을 구분하는 브라우저 로컬 id. 같은 사람이 두 번
+  // 누르는 걸 막기 위한 것이고, 신원 확인이 아니다.
+  function voterId() {
+    let id = window.localStorage.getItem("kidsnote.voter");
+    if (!id) {
+      id = (crypto.randomUUID?.() || String(Math.random()).slice(2)).replaceAll("-", "");
+      window.localStorage.setItem("kidsnote.voter", id);
+    }
+    return id;
+  }
   const LIGHTBOX_MIN_ZOOM = 1;
   const LIGHTBOX_MAX_ZOOM = 4;
   const LIGHTBOX_ZOOM_STEP = 0.5;
@@ -2366,6 +2647,11 @@ APP_JS = """(() => {
     posts: [],
     videos: [],
     videosLoaded: false,
+    photos: [],
+    photosLoaded: false,
+    photoLikes: {},
+    photoSort: window.localStorage.getItem("kidsnote.photoSort") || "date",
+    photoLimit: PHOTO_PAGE,
     adminPasscode: "",
     counts: { daily: 0, album: 0, announcement: 0 },
     newCounts: { daily: 0, album: 0, announcement: 0 },
@@ -2676,7 +2962,7 @@ APP_JS = """(() => {
     // Videos contribute their months too, otherwise the 영상 tab offers a
     // month list that can only ever filter its own cards away.
     const months = [...new Set(
-      [...childPosts(), ...childVideos()].map(monthKey).filter(Boolean),
+      [...childPosts(), ...childVideos(), ...childPhotos()].map(monthKey).filter(Boolean),
     )].sort().reverse();
     monthFilter.innerHTML = [
       '<option value="">전체 기간</option>',
@@ -2693,8 +2979,10 @@ APP_JS = """(() => {
         ? Object.values(state.newCounts).reduce((total, value) => total + value, 0)
         : tab.key === VIDEO_TYPE
           ? childVideos().length
-          : state.counts[tab.key] || 0;
-      const newCount = tab.key === "home" || tab.key === VIDEO_TYPE
+          : tab.key === PHOTOS_TYPE
+            ? childPhotos().length
+            : state.counts[tab.key] || 0;
+      const newCount = tab.key === "home" || tab.key === VIDEO_TYPE || tab.key === PHOTOS_TYPE
         ? 0
         : state.newCounts[tab.key] || 0;
       const content = (
@@ -2737,7 +3025,7 @@ APP_JS = """(() => {
 
   function applyFilters() {
     const query = normalize(state.query).trim();
-    if (state.activeType === VIDEO_TYPE) {
+    if (state.activeType === VIDEO_TYPE || state.activeType === PHOTOS_TYPE) {
       state.posts = [];
       return;
     }
@@ -2806,6 +3094,10 @@ APP_JS = """(() => {
   function renderList() {
     if (state.activeType === VIDEO_TYPE) {
       renderVideoList();
+      return;
+    }
+    if (state.activeType === PHOTOS_TYPE) {
+      renderPhotoList();
       return;
     }
     listTitle.textContent = activeListLabel();
@@ -2947,6 +3239,190 @@ APP_JS = """(() => {
     );
   }
 
+  // ---- 댓글 ----
+  function commentSectionHtml() {
+    return (
+      '<section class="comments" id="comments">'
+      + '<h3 class="comments-title">댓글</h3>'
+      + '<div class="comments-list" id="commentsList"><div class="empty">불러오는 중</div></div>'
+      + '<form class="comment-form" id="commentForm">'
+      + '<textarea id="commentBody" rows="2" maxlength="1000" placeholder="한마디 남겨주세요"></textarea>'
+      + '<button type="submit">등록</button>'
+      + "</form>"
+      + '<p class="comment-message" id="commentMessage" aria-live="polite"></p>'
+      + "</section>"
+    );
+  }
+
+  function formatCommentTime(ms) {
+    const d = new Date(Number(ms));
+    if (Number.isNaN(d.getTime())) return "";
+    return new Intl.DateTimeFormat("ko-KR", {
+      timeZone: "Asia/Seoul",
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit",
+    }).format(d);
+  }
+
+  function renderComments(list) {
+    const node = document.getElementById("commentsList");
+    if (!node) return;
+    if (!list.length) {
+      node.innerHTML = '<div class="empty">아직 댓글이 없습니다.</div>';
+      return;
+    }
+    node.innerHTML = list.map((comment) => (
+      '<article class="comment">'
+      + `<p class="comment-body">${escapeHtml(comment.body)}</p>`
+      + `<time class="comment-time">${escapeHtml(formatCommentTime(comment.created_at))}</time>`
+      + "</article>"
+    )).join("");
+  }
+
+  async function loadComments(type, id) {
+    const node = document.getElementById("commentsList");
+    try {
+      const response = await fetch(`/api/comments?type=${type}&id=${encodeURIComponent(id)}`);
+      const ctype = response.headers.get("content-type") || "";
+      if (!response.ok || !ctype.includes("application/json")) throw new Error("comments");
+      const payload = await response.json();
+      renderComments(payload.comments || []);
+    } catch {
+      if (node) node.innerHTML = '<div class="error">댓글을 불러오지 못했습니다.</div>';
+    }
+  }
+
+  function wireCommentForm(type, id) {
+    const form = document.getElementById("commentForm");
+    const input = document.getElementById("commentBody");
+    const message = document.getElementById("commentMessage");
+    if (!form) return;
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const body = input.value.trim();
+      if (!body) return;
+      message.textContent = "";
+      form.querySelector("button").disabled = true;
+      try {
+        const response = await fetch("/api/comments", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ type, id: String(id), child: state.activeChild, body }),
+        });
+        const ctype = response.headers.get("content-type") || "";
+        if (!ctype.includes("application/json")) throw new Error("no api");
+        const payload = await response.json();
+        if (!response.ok) {
+          message.textContent = response.status === 429
+            ? "잠시 후에 다시 시도해주세요."
+            : (payload.error || "등록하지 못했습니다.");
+          return;
+        }
+        input.value = "";
+        await loadComments(type, id);
+      } catch {
+        message.textContent = "등록하지 못했습니다.";
+      } finally {
+        form.querySelector("button").disabled = false;
+      }
+    });
+  }
+
+  // ---- 사진 좋아요 ----
+  async function toggleLike(button) {
+    const photoSrc = button.dataset.photoSrc;
+    if (!photoSrc || button.disabled) return;
+    button.disabled = true;
+    try {
+      const response = await fetch("/api/likes", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          photo_id: photoSrc,
+          post_id: button.dataset.postId || "",
+          child: state.activeChild,
+          voter: voterId(),
+        }),
+      });
+      const ctype = response.headers.get("content-type") || "";
+      if (!response.ok || !ctype.includes("application/json")) return;
+      const payload = await response.json();
+      state.photoLikes[photoSrc] = { likes: payload.likes, mine: payload.mine };
+      // 같은 사진이 상세와 모아보기에 동시에 떠 있을 수 있다.
+      document.querySelectorAll(`[data-photo-src="${CSS.escape(photoSrc)}"]`).forEach((node) => {
+        node.classList.toggle("is-liked", payload.mine);
+        const count = node.querySelector(".like-count");
+        if (count) count.textContent = payload.likes || "";
+      });
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  /** 상세 본문의 사진마다 하트를 붙이고 현재 집계를 반영한다. */
+  async function enhancePhotoLikes(post) {
+    const content = detail.querySelector(".detail-content");
+    if (!content) return;
+    const figures = Array.from(content.querySelectorAll("figure"));
+    if (!figures.length) return;
+
+    function makeLikeButton(src) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "like-button";
+      button.dataset.photoSrc = src;
+      button.dataset.postId = String(post.id);
+      button.setAttribute("aria-label", "좋아요");
+      button.innerHTML = '<span aria-hidden="true">♥</span><span class="like-count"></span>';
+      return button;
+    }
+
+    const gallery = content.querySelector(".album-gallery");
+    if (gallery) {
+      // 앨범 글은 원본 figure 가 CSS 로 숨겨지고 타일 버튼이 대신 보인다.
+      // figure 에 하트를 붙이면 보이지 않으므로 타일 쪽에 붙인다. 버튼 안에
+      // 버튼을 넣을 수는 없어서 타일을 감싸고 형제로 둔다.
+      Array.from(gallery.querySelectorAll(".gallery-item")).forEach((tile, index) => {
+        const item = state.detailLightboxItems[index];
+        if (!item) return;
+        const src = new URL(item.src, window.location.origin).pathname;
+        const cell = document.createElement("div");
+        cell.className = "gallery-cell";
+        tile.replaceWith(cell);
+        cell.appendChild(tile);
+        cell.appendChild(makeLikeButton(src));
+      });
+    } else {
+      figures.forEach((figure) => {
+        const image = figure.querySelector("img");
+        if (!image) return;
+        const src = new URL(image.getAttribute("src"), window.location.origin).pathname;
+        figure.classList.add("has-like");
+        figure.appendChild(makeLikeButton(src));
+      });
+    }
+
+    try {
+      const response = await fetch(
+        `/api/likes?post=${encodeURIComponent(post.id)}&voter=${encodeURIComponent(voterId())}`,
+      );
+      const ctype = response.headers.get("content-type") || "";
+      if (!response.ok || !ctype.includes("application/json")) return;
+      const payload = await response.json();
+      for (const [src, info] of Object.entries(payload.photos || {})) {
+        state.photoLikes[src] = info;
+        content.querySelectorAll(`[data-photo-src="${CSS.escape(src)}"]`).forEach((node) => {
+          node.classList.toggle("is-liked", info.mine);
+          const count = node.querySelector(".like-count");
+          if (count) count.textContent = info.likes || "";
+        });
+      }
+    } catch {
+      // 집계를 못 가져와도 하트는 눌러진다.
+    }
+  }
+
   async function loadDetail(id) {
     state.selectedId = Number(id);
     detail.innerHTML = '<div class="empty">불러오는 중</div>';
@@ -2963,12 +3439,16 @@ APP_JS = """(() => {
         + `<h2 class="detail-title">${escapeHtml(title)}</h2>`
         + `<div class="detail-meta"><span class="badge ${post.type}">${escapeHtml(post.type_label)}</span><span>${escapeHtml(post.date)}</span>${newMarker}</div>`
         + `<div class="detail-content">${post.content || ""}</div>`
+        + commentSectionHtml()
         + renderPostNav()
       );
       document.title = `${title} | ${activeChild().name}의 키즈노트`;
       cleanDetailContent(detail.querySelector(".detail-content"));
       state.lightboxItems = [];
       enhanceMediaLightbox(post);
+      enhancePhotoLikes(post);
+      wireCommentForm("post", post.id);
+      loadComments("post", post.id);
     } catch {
       detail.innerHTML = '<div class="error">상세 내용을 불러오지 못했습니다.</div>';
     }
@@ -3321,12 +3801,21 @@ APP_JS = """(() => {
     videoModal.hidden = false;
     document.body.classList.add("modal-open");
     videoModalClose.focus();
+
+    const slot = document.getElementById("videoComments");
+    if (slot) {
+      slot.innerHTML = commentSectionHtml();
+      wireCommentForm("video", video.id);
+      loadComments("video", video.id);
+    }
   }
 
   function closeVideoModal() {
     if (videoModal.hidden) return;
     videoModal.hidden = true;
     videoModalFrame.replaceChildren();
+    const slot = document.getElementById("videoComments");
+    if (slot) slot.innerHTML = "";
     videoModalLink.removeAttribute("href");
     document.body.classList.remove("modal-open");
   }
@@ -3345,6 +3834,108 @@ APP_JS = """(() => {
       state.videos = [];
       state.videosLoaded = false;
     }
+  }
+
+  async function loadPhotos() {
+    try {
+      const response = await fetch("/data/photos.json");
+      if (!response.ok) throw new Error("photos");
+      const payload = await response.json();
+      state.photos = payload.photos || [];
+      state.photosLoaded = true;
+    } catch {
+      state.photos = [];
+      state.photosLoaded = false;
+    }
+  }
+
+  /** 좋아요 많은 순 집계를 받아 photoLikes 에 합친다. 실패해도 목록은 보인다. */
+  async function loadTopLikes() {
+    try {
+      const response = await fetch(`/api/likes?top=500&voter=${encodeURIComponent(voterId())}`);
+      const type = response.headers.get("content-type") || "";
+      if (!response.ok || !type.includes("application/json")) return;
+      const payload = await response.json();
+      for (const row of payload.photos || []) {
+        const prev = state.photoLikes[row.photo_id] || {};
+        state.photoLikes[row.photo_id] = { likes: row.likes, mine: prev.mine || false };
+      }
+    } catch {
+      // 좋아요 수가 없어도 사진은 보여야 한다.
+    }
+  }
+
+  function childPhotos() {
+    return state.photos.filter((photo) => (photo.child || DEFAULT_CHILD) === state.activeChild);
+  }
+
+  function filteredPhotos() {
+    const query = normalize(state.query).trim();
+    let list = childPhotos().filter((photo) => {
+      if (state.activeMonth && String(photo.date || "").slice(0, 7) !== state.activeMonth) return false;
+      if (!query) return true;
+      return normalize([photo.caption, photo.date].join(" ")).includes(query);
+    });
+    if (state.photoSort === "likes") {
+      list = [...list].sort((a, b) => {
+        const la = state.photoLikes[a.src]?.likes || 0;
+        const lb = state.photoLikes[b.src]?.likes || 0;
+        if (lb !== la) return lb - la;
+        return String(b.date).localeCompare(String(a.date));
+      });
+    } else {
+      list = [...list].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    }
+    return list;
+  }
+
+  function renderPhotoList() {
+    const photos = filteredPhotos();
+    const filters = [state.activeMonth, state.query.trim()].filter(Boolean).length;
+    listTitle.textContent = "사진 모아보기";
+    listCount.textContent = filters ? `${photos.length}장 필터됨` : `${photos.length}장`;
+    renderListCollapseState();
+
+    if (!photos.length) {
+      entryList.innerHTML = state.photosLoaded
+        ? `<div class="empty">${escapeHtml(activeChild().name)} 사진이 아직 없습니다.</div>`
+        : '<div class="error">사진 목록을 불러오지 못했습니다.</div>';
+      return;
+    }
+
+    const shown = photos.slice(0, state.photoLimit);
+    const cards = shown.map((photo, index) => {
+      const like = state.photoLikes[photo.src] || { likes: 0, mine: false };
+      return (
+        `<figure class="photo-cell" data-photo-index="${index}">`
+        + `<img src="${escapeHtml(photo.src)}" alt="${escapeHtml(photo.caption || "")}" loading="lazy">`
+        + `<button class="like-button${like.mine ? " is-liked" : ""}" type="button"`
+        + ` data-photo-src="${escapeHtml(photo.src)}" data-post-id="${escapeHtml(String(photo.post_id))}"`
+        + ` aria-label="좋아요"><span aria-hidden="true">♥</span>`
+        + `<span class="like-count">${like.likes || ""}</span></button>`
+        + `<figcaption>${escapeHtml(photo.date || "")}</figcaption>`
+        + "</figure>"
+      );
+    }).join("");
+
+    const more = photos.length > shown.length
+      ? `<button class="photo-more" type="button" id="photoMore">더 보기 (${photos.length - shown.length}장 남음)</button>`
+      : "";
+
+    entryList.innerHTML = (
+      '<div class="photo-tools">'
+      + `<button class="photo-sort${state.photoSort === "date" ? " is-active" : ""}" type="button" data-sort="date">최신순</button>`
+      + `<button class="photo-sort${state.photoSort === "likes" ? " is-active" : ""}" type="button" data-sort="likes">좋아요순</button>`
+      + "</div>"
+      + `<div class="photo-grid">${cards}</div>${more}`
+    );
+
+    // 모아보기에서 사진을 누르면 라이트박스로 크게 본다.
+    state.lightboxItems = shown.map((photo) => ({
+      src: photo.src,
+      alt: photo.caption || "",
+      caption: photo.caption || photo.date || "",
+    }));
   }
 
   async function loadApp() {
@@ -3395,9 +3986,16 @@ APP_JS = """(() => {
         renderTabs();
         renderPageHeader();
         await loadDetail(state.selectedId);
+        // 상세를 먼저 그리고 나서 채운다. photos.json 은 수천 장짜리라
+        // 기다렸다가 그리면 본문이 그만큼 늦게 뜬다.
+        Promise.all([loadVideos(), loadPhotos()]).then(() => {
+          recomputeCounts();
+          renderTabs();
+        });
       } else {
         renderDocumentTitle();
-        await loadVideos();
+        await Promise.all([loadVideos(), loadPhotos()]);
+        await loadTopLikes();
         renderMonthOptions();
         refreshView();
       }
@@ -3424,6 +4022,34 @@ APP_JS = """(() => {
   });
 
   entryList.addEventListener("click", (event) => {
+    const like = event.target.closest(".like-button");
+    if (like) {
+      event.preventDefault();
+      toggleLike(like);
+      return;
+    }
+
+    const sort = event.target.closest("button[data-sort]");
+    if (sort) {
+      state.photoSort = sort.dataset.sort;
+      window.localStorage.setItem("kidsnote.photoSort", state.photoSort);
+      state.photoLimit = PHOTO_PAGE;
+      renderPhotoList();
+      return;
+    }
+
+    if (event.target.closest("#photoMore")) {
+      state.photoLimit += PHOTO_PAGE;
+      renderPhotoList();
+      return;
+    }
+
+    const cell = event.target.closest("figure[data-photo-index]");
+    if (cell) {
+      showLightbox(Number(cell.dataset.photoIndex), state.lightboxItems);
+      return;
+    }
+
     const card = event.target.closest("button[data-video-id]");
     if (!card) return;
     openVideoModal(card.dataset.videoId);
@@ -3466,6 +4092,13 @@ APP_JS = """(() => {
   });
 
   detail.addEventListener("click", (event) => {
+    const like = event.target.closest(".like-button");
+    if (like) {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleLike(like);
+      return;
+    }
     const target = event.target.closest("[data-gallery-index]");
     if (target) showLightbox(Number(target.dataset.galleryIndex), state.detailLightboxItems);
   });
