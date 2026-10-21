@@ -106,6 +106,16 @@ npx wrangler pages dev --port 9600 --d1 DB=f3c5379c-7d6b-4bb4-9d42-e5d037b80eed
 `env.preview` 오버라이드가 없다. 의도적인 선택이다(가족용, 스키마 이중 관리 회피). 대신
 `--branch` 프리뷰 배포에서 남긴 테스트 댓글·좋아요가 **실제 DB에 들어간다**는 점에 주의.
 
+**배포 직후 바로 Functions를 때리지 말 것.** Pages는 번들 전파에 시간이 걸린다.
+배포 6초 뒤에 친 POST 하나가 **405에 빈 본문**으로 돌아온 적이 있는데, Function이
+아직 안 붙어서 정적 핸들러가 받은 것이다(정적 자산에 POST → 405). 같은 요청이 잠시 뒤엔
+201로 통과했다. 500이 아니라 405라 코드 버그처럼 안 보이니 주의. 10~20초 기다리고 검증한다.
+
+**관리자 비번은 `ADMIN_PASSCODE` Pages Secret이다.** production과 preview에 각각 넣어야
+한다(`wrangler pages secret put ADMIN_PASSCODE --project-name seoi-kidsnote [--env preview]`).
+사이트 입구의 가족 패스코드와 달리 이건 Function이 서버에서 대조하므로 실제로 막힌다.
+6자리 숫자라 `auth_attempts` 테이블로 IP당 5회 실패 시 15분 차단한다.
+
 **Notion 스키마 의존.** `resolve_schema()`가 property를 이름으로 찾는다 —
 `REPORT_ID_CANDIDATES`(현 DB에서는 `번호`)와 `DATE_CANDIDATES`(`날짜`). 이 두 property를
 Notion에서 이름 변경하면 export가 하드 에러로 죽는다. 현 DB 스키마가 노션 기본 템플릿
