@@ -151,9 +151,21 @@ workflow_dispatch 입력으로는 cron 경로를 제어할 수 없다. 그래서
 
 ## 운영 메모
 
-- `.github/workflows/kidsnote-to-notion.yml`이 KST 03:15/09:15/15:15/21:15에 돌고, **성공했을
-  때만** `workflow_run` 트리거로 `seoi-kidsnote-static.yml`이 이어진다. 그 앞 02:40에
-  `kidsnote-session-refresh.yml`이 쿠키를 점검한다.
+- **스케줄은 GitHub이 아니라 Cloudflare Worker(`cron-worker/`)가 쏜다.** GitHub은
+  2026-10-08부터 12일간 이 저장소의 schedule 이벤트를 전혀 쏘지 않았고(설정은 멀쩡했고
+  업스트림 fork는 정상이었다), 원인은 끝내 모른다. 두 워크플로의 `schedule:`은 주석으로
+  남겨 뒀으니 되돌릴 수 있다 — 단 **둘 다 켜면 하루 두 번 돈다.**
+
+      KST 19:30  세션 갱신   (30 10 * * * UTC)
+      KST 20:00  미러        (0 11 * * * UTC)  → 성공 시 workflow_run 으로 정적 배포
+      KST 22:00  신선도 확인 (0 13 * * * UTC)
+
+  Worker 코드를 고쳤으면 `cd cron-worker && npx wrangler deploy` 를 해야 반영된다.
+  CI가 배포하지 않는다.
+- **신선도 확인은 배포 여부가 아니라 결과물을 본다.** 라이브 `data/posts.json` 의
+  `exported_at` 이 24시간을 넘기면 경보다. dispatch 가 204 를 받아도 쿠키·노션·export·배포
+  중 어디가 죽었을 수 있는데, `exported_at` 이 안 움직이는 것만이 그 전부를 덮는 신호다.
+  경보 전달은 아직 비어 있다(`notify()` 가 로그만 남긴다) — 웹훅 한 줄이면 된다.
 - 시크릿을 쓰는 워크플로는 PAT가 필요하다(`GH_SECRETS_PAT`). 내장 `GITHUB_TOKEN`은
   `permissions:`를 어떻게 주든 Actions 시크릿을 관리할 수 없다. PAT가 잘못되면 401
   `Bad credentials`가 나오는데, 이는 scope 부족(403)이 아니라 토큰 자체가 무효라는 뜻이다.

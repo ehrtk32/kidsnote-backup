@@ -29,10 +29,12 @@ on:
         default: "off"
         type: choice
         options: ["off", "on"]
-  schedule:
-    # 02:40 KST daily - 35 minutes ahead of the 03:15 KST mirror, so a cookie
-    # that died overnight is replaced before the first mirror of the day.
-    - cron: "40 17 * * *"
+  # schedule: 은 일부러 없다 — cron-worker/ 가 KST 19:30 에 쏜다. 미러
+  # (KST 20:00) 30분 전이라는 원래 설계는 그대로다. 이유는
+  # kidsnote-to-notion.yml 의 같은 자리에 적어 뒀다.
+  #
+  #   schedule:
+  #     - cron: "40 17 * * *"
 
 permissions:
   contents: read

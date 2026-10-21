@@ -19,9 +19,13 @@ const SITE = "https://seoi-kidsnote.pages.dev";
 // 알림장이 올라오는 시각(KST 03:15 / 09:15 / 15:15 / 21:15)을 그대로
 // 유지하기 위해서다. Cloudflare cron 도 UTC 다.
 const JOBS = {
-  "15 */6 * * *": "kidsnote-to-notion.yml",
-  "40 17 * * *": "kidsnote-session-refresh.yml",
+  "30 10 * * *": "kidsnote-session-refresh.yml",   // KST 19:30
+  "0 11 * * *": "kidsnote-to-notion.yml",          // KST 20:00
 };
+
+// 결과물이 실제로 갱신됐는지 보는 cron. 미러와 배포가 끝난 뒤(KST 22:00)라야
+// 오늘 것을 본다.
+const FRESHNESS_CRON = "0 13 * * *";
 
 // 마지막 export 가 이 시간을 넘기면 파이프라인이 죽은 것으로 본다. 미러는
 // 6시간마다 도니 24시간이면 네 번을 내리 놓친 셈이다.
@@ -150,6 +154,11 @@ async function checkFreshness() {
 
 export default {
   async scheduled(controller, env, ctx) {
+    if (controller.cron === FRESHNESS_CRON) {
+      await checkFreshness();
+      return;
+    }
+
     const workflow = JOBS[controller.cron];
     if (!workflow) {
       // cron 을 추가해 놓고 JOBS 에 매핑을 빠뜨리면 조용히 아무 일도 안
@@ -159,12 +168,6 @@ export default {
     }
 
     await dispatchWorkflow(env, workflow);
-
-    // 신선도는 하루 한 번만 본다. 미러 쪽 cron 에 붙이면 하루 네 번 같은
-    // 말을 하게 된다.
-    if (controller.cron === "40 17 * * *") {
-      ctx.waitUntil(checkFreshness());
-    }
   },
 
   // 브라우저로 열었을 때 상태를 보여 준다. 배포가 살아 있는지, cron 매핑이

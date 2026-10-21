@@ -82,12 +82,20 @@ on:
       # were removed at the same time as use_ai_features for the same
       # single-source-of-truth reason — the cron path never had access
       # to them anyway, so keeping them as inputs was misleading.
-  # Runs every 6 hours. GitHub cron uses UTC, so this maps to
-  # 03:15 / 09:15 / 15:15 / 21:15 KST.
-  # The static site workflow runs after this workflow succeeds, so the
-  # visible Pages site is rebuilt only after Notion has been updated.
-  schedule:
-    - cron: "15 */6 * * *"
+  # schedule: 은 일부러 없다.
+  #
+  # GitHub 은 2026-10-08 부터 12일간 이 저장소의 schedule 이벤트를 한 번도
+  # 쏘지 않았다. 설정은 멀쩡했고(기본 브랜치의 유효한 cron, state=active,
+  # Actions 활성), 같은 파일을 쓰는 업스트림 fork 는 정상으로 돌았다.
+  # disable/enable 토글로 9시간 뒤 돌아오긴 했지만 원인은 끝내 모른다.
+  #
+  # 이제 Cloudflare Worker(cron-worker/)가 KST 20:00 에 workflow_dispatch 로
+  # 이 워크플로를 쏜다. workflow_dispatch 는 그 12일 동안에도 멀쩡했다.
+  # 되돌리려면 아래를 살리고 Worker 의 cron 을 지우면 된다 — 둘 다 켜면
+  # 하루 두 번 돈다(dedup 덕에 무해하지만 낭비다).
+  #
+  #   schedule:
+  #     - cron: "15 */6 * * *"
 
 permissions:
   contents: read
