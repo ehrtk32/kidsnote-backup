@@ -819,6 +819,7 @@ INDEX_HTML = """<!doctype html>
     </figure>
     <button class="lightbox-nav lightbox-next" type="button" aria-label="다음 사진">&#8250;</button>
   </div>
+  <div class="admin-banner" id="adminBanner" hidden>관리자 모드</div>
   <button class="admin-hotspot admin-hotspot-mobile" id="adminHotspotMobile"
           type="button" tabindex="-1" aria-hidden="true"></button>
   <div class="admin-modal" id="adminModal" hidden role="dialog" aria-modal="true" aria-labelledby="adminModalTitle">
@@ -835,17 +836,10 @@ INDEX_HTML = """<!doctype html>
         <button class="admin-submit" type="submit">확인</button>
       </form>
 
-      <form class="admin-form" id="adminVideoForm" hidden>
-        <label for="videoChild">자녀</label>
-        <select id="videoChild"></select>
-        <label for="videoUrl">영상 공유 링크</label>
-        <input id="videoUrl" type="url" placeholder="https://naver.me/..." autocomplete="off">
-        <label for="videoTitle">제목 <span class="admin-optional">(비우면 영상 제목)</span></label>
-        <input id="videoTitle" type="text" maxlength="200" autocomplete="off">
-        <label for="videoDate">날짜 <span class="admin-optional">(선택)</span></label>
-        <input id="videoDate" type="date">
-        <button class="admin-submit" type="submit">영상 추가</button>
-      </form>
+      <div class="admin-session" id="adminSessionBox" hidden>
+        <p>관리자 모드가 켜져 있습니다. 영상과 댓글에 삭제 버튼이 보입니다.</p>
+        <button class="admin-exit" id="adminExit" type="button">관리자 모드 끄기</button>
+      </div>
 
       <form class="admin-form admin-form-secondary" id="adminMyboxForm" hidden>
         <button class="admin-toggle" id="adminMyboxToggle" type="button" aria-expanded="false">
@@ -2080,6 +2074,104 @@ body:not(.locked) .passcode-screen {
 }
 
 /* ---------- 관리자 모드 ---------- */
+/* 삭제 버튼은 관리자 세션일 때만 나타난다. 가족이 보는 평소 화면에는
+   아예 없다. 막는 것은 서버의 비번이고, 이 클래스는 보이고 안 보이고만
+   정한다. */
+.admin-delete {
+  display: none;
+}
+
+body.is-admin .admin-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+body.is-admin .admin-delete:hover {
+  border-color: var(--danger);
+  background: var(--surface-soft);
+}
+
+.entry-row {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+}
+
+.entry-row .entry {
+  border-bottom: 0;
+}
+
+body.is-admin .entry-row .admin-delete {
+  margin-right: 12px;
+}
+
+.comment {
+  position: relative;
+}
+
+body.is-admin .comment .admin-delete {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 28px;
+  height: 28px;
+  font-size: 12px;
+}
+
+/* 관리자 모드라는 걸 본인은 알아야 한다. 숨긴 것은 진입점이지 상태가
+   아니다. */
+.admin-banner {
+  position: fixed;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  z-index: 40;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--accent-strong);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 650;
+  box-shadow: var(--shadow);
+  pointer-events: none;
+}
+
+.admin-session {
+  padding: 16px 18px 0;
+}
+
+.admin-session p {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.admin-exit {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+  background: var(--surface);
+  color: var(--danger);
+  font-size: 14px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.admin-exit:hover {
+  border-color: var(--danger);
+}
+
 /* 관리자 진입은 눈에 보이지 않는다. 가족이 매일 보는 화면에 쓸 일 없는
    버튼을 두지 않으려는 것이고, 비밀번호는 어차피 서버가 확인하므로
    숨김 자체가 보안은 아니다.
@@ -2843,7 +2935,10 @@ APP_JS = """(() => {
     photoLikes: {},   // photo_id → 누른 횟수
     photoSort: window.localStorage.getItem("kidsnote.photoSort") || "date",
     photoLimit: PHOTO_PAGE,
-    adminPasscode: "",
+    // 관리자 세션. 글 상세는 실제 페이지 이동이라 sessionStorage 를 쓴다 —
+    // 안 그러면 글 하나 열 때마다 비번을 다시 넣어야 한다. 탭을 닫으면
+    // 사라진다.
+    adminPasscode: window.sessionStorage.getItem("kidsnote.admin") || "",
     counts: { daily: 0, album: 0, announcement: 0 },
     newCounts: { daily: 0, album: 0, announcement: 0 },
     recentDateKeys: recentDateKeys(),
@@ -2897,7 +2992,9 @@ APP_JS = """(() => {
   const adminClose = document.querySelector(".admin-close");
   const adminLoginForm = document.getElementById("adminLoginForm");
   const adminPasscodeInput = document.getElementById("adminPasscode");
-  const adminVideoForm = document.getElementById("adminVideoForm");
+  const adminSessionBox = document.getElementById("adminSessionBox");
+  const adminExit = document.getElementById("adminExit");
+  const adminBanner = document.getElementById("adminBanner");
   const adminMessage = document.getElementById("adminMessage");
   const adminMyboxForm = document.getElementById("adminMyboxForm");
   const adminMyboxToggle = document.getElementById("adminMyboxToggle");
@@ -2910,10 +3007,6 @@ APP_JS = """(() => {
   const currentPasscode = document.getElementById("currentPasscode");
   const newPasscode = document.getElementById("newPasscode");
   const newPasscodeConfirm = document.getElementById("newPasscodeConfirm");
-  const videoChild = document.getElementById("videoChild");
-  const videoUrl = document.getElementById("videoUrl");
-  const videoTitle = document.getElementById("videoTitle");
-  const videoDate = document.getElementById("videoDate");
   const videoModal = document.getElementById("videoModal");
   const videoModalTitle = document.getElementById("videoModalTitle");
   const videoModalFrame = document.getElementById("videoModalFrame");
@@ -3286,12 +3379,16 @@ APP_JS = """(() => {
         ? `<span class="entry-summary">${escapeHtml(video.summary)}</span>`
         : "";
       return (
-        `<button class="entry" type="button" data-video-id="${escapeHtml(video.id)}">`
+        '<div class="entry-row">'
+        + `<button class="entry" type="button" data-video-id="${escapeHtml(video.id)}">`
         + '<span class="entry-thumb entry-thumb-video" aria-hidden="true">▶</span>'
         + "<span>"
         + `<span class="entry-kicker"><span class="badge video">영상</span>${date}</span>`
         + `<span class="entry-title">${escapeHtml(video.title)}</span>${summary}`
         + "</span></button>"
+        + `<button class="admin-delete" type="button" data-delete-video="${escapeHtml(video.id)}"`
+        + ' aria-label="영상 삭제">🗑</button>'
+        + "</div>"
       );
     }).join("");
   }
@@ -3480,6 +3577,8 @@ APP_JS = """(() => {
       '<article class="comment">'
       + `<p class="comment-body">${escapeHtml(comment.body)}</p>`
       + `<time class="comment-time">${escapeHtml(formatCommentTime(comment.created_at))}</time>`
+      + `<button class="admin-delete" type="button" data-delete-comment="${escapeHtml(String(comment.id))}"`
+      + ' aria-label="댓글 삭제">🗑</button>'
       + "</article>"
     )).join("");
   }
@@ -3865,15 +3964,35 @@ APP_JS = """(() => {
     adminMessage.classList.toggle("is-error", Boolean(isError));
   }
 
+  const isAdmin = () => Boolean(state.adminPasscode);
+
+  /** 관리자 상태를 화면 전체에 반영한다. 삭제 버튼들이 이 클래스로 켜진다. */
+  function renderAdminState() {
+    document.body.classList.toggle("is-admin", isAdmin());
+    adminBanner.hidden = !isAdmin();
+  }
+
+  function enterAdmin(passcode) {
+    state.adminPasscode = passcode;
+    window.sessionStorage.setItem("kidsnote.admin", passcode);
+    renderAdminState();
+  }
+
+  function exitAdmin() {
+    state.adminPasscode = "";
+    window.sessionStorage.removeItem("kidsnote.admin");
+    renderAdminState();
+  }
+
   function openAdminModal() {
     adminModal.hidden = false;
     document.body.classList.add("modal-open");
     setAdminMessage("", false);
-    if (state.adminPasscode) {
-      showAdminVideoForm();
+    if (isAdmin()) {
+      showAdminPanel();
     } else {
       adminLoginForm.hidden = false;
-      adminVideoForm.hidden = true;
+      adminSessionBox.hidden = true;
       adminMyboxForm.hidden = true;
       adminPasscodeForm.hidden = true;
       adminPasscodeInput.value = "";
@@ -3888,18 +4007,15 @@ APP_JS = """(() => {
     adminPasscodeInput.value = "";
   }
 
-  function showAdminVideoForm() {
+  function showAdminPanel() {
     adminLoginForm.hidden = true;
-    adminVideoForm.hidden = false;
+    adminSessionBox.hidden = false;
     adminMyboxForm.hidden = false;
     adminPasscodeForm.hidden = false;
-    const options = children.map((child) => (
+    myboxChild.innerHTML = children.map((child) => (
       `<option value="${escapeHtml(child.key)}"${child.key === state.activeChild ? " selected" : ""}>`
       + `${escapeHtml(child.name)}</option>`
     )).join("");
-    videoChild.innerHTML = options;
-    myboxChild.innerHTML = options;
-    videoUrl.focus();
   }
 
   /** 관리자 API 호출 공통. 통과하면 payload, 아니면 null 을 주고 메시지를 띄운다. */
@@ -3929,10 +4045,10 @@ APP_JS = """(() => {
       const minutes = Math.ceil((payload.retry_after_seconds || 0) / 60);
       setAdminMessage(`시도가 너무 많습니다. ${minutes}분 뒤에 다시 해주세요.`, true);
     } else if (response.status === 401) {
-      // 비번이 틀렸거나 바뀐 것이므로 들고 있던 값을 버린다.
-      state.adminPasscode = "";
+      // 비번이 틀렸거나 바뀐 것이므로 세션을 끊는다.
+      exitAdmin();
       adminLoginForm.hidden = false;
-      adminVideoForm.hidden = true;
+      adminSessionBox.hidden = true;
       adminMyboxForm.hidden = true;
       adminPasscodeForm.hidden = true;
       adminPasscodeInput.value = "";
@@ -3951,12 +4067,41 @@ APP_JS = """(() => {
       setAdminMessage("비밀번호를 입력해주세요.", true);
       return;
     }
-    // 전용 로그인 엔드포인트를 두지 않는다. 목록 조회는 비번이 필요 없고,
-    // 추가는 어차피 비번을 같이 보내므로, 확인은 첫 추가에서 자연히 이뤄진다.
-    // 여기서는 값만 받아 두고 폼을 연다.
-    state.adminPasscode = value;
+    // 값이 맞는지 서버에 물어본다. 틀린 채로 세션에 들어가면 삭제 버튼이
+    // 보이는데 누를 때마다 실패하는, 설명하기 어려운 상태가 된다.
+    setAdminMessage("확인하는 중...", false);
+    let response;
+    try {
+      response = await fetch("/api/admin/check", {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify({ passcode: value }),
+      });
+    } catch {
+      setAdminMessage("서버에 연결하지 못했습니다.", true);
+      return;
+    }
+    const type = response.headers.get("content-type") || "";
+    if (!type.includes("application/json")) {
+      setAdminMessage("API를 찾을 수 없습니다. 배포에 Functions가 빠졌을 수 있습니다.", true);
+      return;
+    }
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (response.status === 429) {
+        const minutes = Math.ceil((payload.retry_after_seconds || 0) / 60);
+        setAdminMessage(`시도가 너무 많습니다. ${minutes}분 뒤에 다시 해주세요.`, true);
+      } else {
+        setAdminMessage("비밀번호가 맞지 않습니다.", true);
+      }
+      adminPasscodeInput.select();
+      return;
+    }
+
+    enterAdmin(value);
     setAdminMessage("", false);
-    showAdminVideoForm();
+    showAdminPanel();
+    refreshView();
   }
 
   function clearPasscodeFields() {
@@ -4077,44 +4222,32 @@ APP_JS = """(() => {
     setAdminMessage("비밀번호를 변경했습니다.", false);
   }
 
-  async function handleVideoSubmit(event) {
-    event.preventDefault();
-    const payload = {
-      child: videoChild.value,
-      url: videoUrl.value.trim(),
-      title: videoTitle.value.trim(),
-      date: videoDate.value,
-    };
-    if (!payload.url) {
-      setAdminMessage("영상 링크를 입력해주세요.", true);
-      return;
-    }
+  /** 관리자 삭제 공통. 지웠으면 true. */
+  async function adminDelete(url, label) {
+    if (!isAdmin()) return false;
+    if (!window.confirm(`${label}을(를) 삭제할까요?`)) return false;
+    const result = await adminRequest(url, "DELETE", {});
+    return Boolean(result);
+  }
 
-    setAdminMessage("추가하는 중...", false);
-    const result = await adminRequest("/api/videos", "POST", payload);
-    if (!result) return;
-
-    setAdminMessage(`"${result.video.title}" 추가했습니다.`, false);
-    videoUrl.value = "";
-    videoTitle.value = "";
-    videoDate.value = "";
-    videoUrl.focus();
-
+  async function deleteVideo(id) {
+    if (!(await adminDelete(`/api/videos/${encodeURIComponent(id)}`, "이 영상"))) return;
     await loadVideos();
-    // 방금 넣은 영상이 지금 보고 있는 자녀의 것이 아니면 그쪽으로 옮겨 준다.
-    if (result.video.child !== state.activeChild) {
-      setActiveChild(result.video.child);
-    } else {
-      recomputeCounts();
-      renderMonthOptions();
-      refreshView();
-    }
+    recomputeCounts();
+    renderMonthOptions();
+    refreshView();
+  }
+
+  async function deleteComment(id, reload) {
+    if (!(await adminDelete(`/api/comments/${encodeURIComponent(id)}`, "이 댓글"))) return;
+    await reload();
   }
 
   async function openVideoModal(id) {
     const video = state.videos.find((item) => item.id === id);
     if (!video) return;
     videoModalTitle.textContent = video.title;
+    videoModalLink.dataset.videoId = video.id;
 
     if ((video.source || "link") === "mybox") {
       // MYBOX 에서 가져온 영상. 재생 URL 은 10분짜리 1회용이라 목록에
@@ -4302,6 +4435,7 @@ APP_JS = """(() => {
   }
 
   async function loadApp() {
+    renderAdminState();
     const params = new URLSearchParams(window.location.search);
     const requestedChild = params.get("child");
     if (children.some((child) => child.key === requestedChild)) {
@@ -4385,6 +4519,13 @@ APP_JS = """(() => {
   });
 
   entryList.addEventListener("click", (event) => {
+    const del = event.target.closest("[data-delete-video]");
+    if (del) {
+      event.preventDefault();
+      deleteVideo(del.dataset.deleteVideo);
+      return;
+    }
+
     const like = event.target.closest(".like-button");
     if (like) {
       event.preventDefault();
@@ -4424,7 +4565,11 @@ APP_JS = """(() => {
     if (event.target === adminModal) closeAdminModal();
   });
   adminLoginForm.addEventListener("submit", handleAdminLogin);
-  adminVideoForm.addEventListener("submit", handleVideoSubmit);
+  adminExit.addEventListener("click", () => {
+    exitAdmin();
+    closeAdminModal();
+    refreshView();
+  });
   adminMyboxForm.addEventListener("submit", handleMyboxSync);
   adminMyboxToggle.addEventListener("click", () => {
     const open = adminMyboxFields.hidden;
@@ -4448,6 +4593,14 @@ APP_JS = """(() => {
     // 펼쳐진 칸이 화면 밖에 생기면 아무 일도 안 일어난 것처럼 보인다.
     adminPasscodeFields.scrollIntoView({ block: "nearest", behavior: "smooth" });
     currentPasscode.focus({ preventScroll: true });
+  });
+
+  videoModal.addEventListener("click", (event) => {
+    const del = event.target.closest("[data-delete-comment]");
+    if (!del) return;
+    event.preventDefault();
+    const videoId = videoModalLink.dataset.videoId || "";
+    deleteComment(del.dataset.deleteComment, () => loadComments("video", videoId));
   });
 
   videoModalClose.addEventListener("click", closeVideoModal);
@@ -4479,6 +4632,13 @@ APP_JS = """(() => {
   });
 
   detail.addEventListener("click", (event) => {
+    const del = event.target.closest("[data-delete-comment]");
+    if (del) {
+      event.preventDefault();
+      deleteComment(del.dataset.deleteComment, () => loadComments("post", state.selectedId));
+      return;
+    }
+
     const like = event.target.closest(".like-button");
     if (like) {
       event.preventDefault();
