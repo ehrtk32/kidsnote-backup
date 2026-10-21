@@ -33,6 +33,16 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # workflow_run 은 미러가 **시작할 때**의 커밋을 가리킨다. 미러가
+          # 30~40분 도는 사이에 푸시한 UI 변경은 그래서 그날 배포에서 조용히
+          # 빠지고, 다음 날에야 나타난다. 자동 배포는 기본 브랜치의 최신
+          # 코드를 쓴다 — 정적 사이트는 항상 지금 코드로 다시 만드는 게 맞다.
+          # 수동 실행(workflow_dispatch)은 고른 ref 를 그대로 둔다.
+          ref: >-
+            ${{ github.event_name == 'workflow_run'
+                && github.event.repository.default_branch
+                || github.ref }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
