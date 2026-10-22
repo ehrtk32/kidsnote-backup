@@ -721,20 +721,8 @@ INDEX_HTML = """<!doctype html>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23548a62'/%3E%3Cpath fill='white' d='M32 52S10 39.5 10 24.5C10 16.8 15.8 12 22.2 12c4.2 0 7.6 2.1 9.8 5.5C34.2 14.1 37.6 12 41.8 12C48.2 12 54 16.8 54 24.5C54 39.5 32 52 32 52z'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="__STYLES_HREF__">
 </head>
-<body class="locked">
-  <section class="passcode-screen" id="passcodeScreen">
-    <form class="passcode-card" id="passcodeForm" autocomplete="off">
-      <div class="passcode-mark" aria-hidden="true">♥</div>
-      <h1>우리 아이 키즈노트</h1>
-      <label class="passcode-label" for="passcodeInput">가족 패스코드</label>
-      <input id="passcodeInput" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="6자리">
-      <p class="passcode-hint">아기생년월일 (6자리)</p>
-      <button class="passcode-submit" type="submit">열기</button>
-      <p class="passcode-message" id="passcodeMessage" aria-live="polite"></p>
-    </form>
-  </section>
-
-  <div class="app-shell" id="appShell" aria-hidden="true">
+<body>
+  <div class="app-shell" id="appShell">
     <aside class="sidebar">
       <header class="sidebar-header">
         <div class="sidebar-brand" id="sidebarBrand">
@@ -939,91 +927,6 @@ select {
   min-height: 100vh;
   display: grid;
   grid-template-columns: 248px minmax(0, 1fr);
-}
-
-.locked .app-shell {
-  display: none;
-}
-
-.passcode-screen {
-  min-height: 100vh;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-}
-
-body:not(.locked) .passcode-screen {
-  display: none;
-}
-
-.passcode-card {
-  width: min(100%, 360px);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  box-shadow: var(--shadow);
-  padding: 28px;
-  display: grid;
-  gap: 12px;
-}
-
-.passcode-mark {
-  width: 42px;
-  height: 42px;
-  border-radius: 8px;
-  background: var(--accent);
-  color: #fff;
-  display: grid;
-  place-items: center;
-  font-size: 19px;
-  font-weight: 800;
-  line-height: 1;
-}
-
-.passcode-card h1 {
-  margin: 0 0 8px;
-  font-size: 22px;
-}
-
-.passcode-label {
-  color: var(--muted);
-  font-size: 14px;
-}
-
-.passcode-card input {
-  width: 100%;
-  min-height: 46px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 0 12px;
-  letter-spacing: .18em;
-}
-
-.passcode-card input:focus {
-  border-color: var(--accent);
-  outline: 3px solid var(--accent-soft);
-}
-
-.passcode-hint {
-  margin: -4px 0 2px;
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.passcode-submit {
-  min-height: 46px;
-  border: 1px solid var(--accent);
-  border-radius: 8px;
-  background: var(--accent);
-  color: #fff;
-  font-weight: 720;
-}
-
-.passcode-message {
-  min-height: 22px;
-  margin: 0;
-  color: var(--danger);
-  font-size: 14px;
 }
 
 .sidebar {
@@ -2897,9 +2800,6 @@ body.modal-open {
 
 
 APP_JS = """(() => {
-  const PASSCODE_HASH = "ab1b686a59dab68ec51204e6ab55baa0e874902dc3e8ebe161832936d6f28ef2";
-  const UNLOCK_KEY = "seoiKidsnoteUnlocked";
-
   // 자녀 설정.
   //
   // `key` 는 절대 바꾸지 말 것. D1 의 videos / comments / likes 가 이 값으로
@@ -3077,9 +2977,6 @@ APP_JS = """(() => {
   const babyDays = document.getElementById("babyDays");
   const pageEyebrow = document.getElementById("pageEyebrow");
   const pageTitle = document.getElementById("pageTitle");
-  const passcodeForm = document.getElementById("passcodeForm");
-  const passcodeInput = document.getElementById("passcodeInput");
-  const passcodeMessage = document.getElementById("passcodeMessage");
 
   const escapeHtml = (value) => String(value || "")
     .replaceAll("&", "&amp;")
@@ -3287,47 +3184,6 @@ APP_JS = """(() => {
       return counts;
     }, { daily: 0, album: 0, announcement: 0 });
     state.newCounts = countNewPosts(posts);
-  }
-
-  async function sha256Hex(value) {
-    const bytes = new TextEncoder().encode(value);
-    const digest = await crypto.subtle.digest("SHA-256", bytes);
-    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-  }
-
-  function unlockApp() {
-    document.body.classList.remove("locked");
-    appShell.removeAttribute("aria-hidden");
-  }
-
-  async function unlockAndLoad() {
-    unlockApp();
-    await loadApp();
-  }
-
-  async function handlePasscodeSubmit(event) {
-    event.preventDefault();
-    const value = passcodeInput.value.trim();
-    passcodeMessage.textContent = "";
-
-    if (value.length !== 6) {
-      passcodeMessage.textContent = "6자리 숫자를 입력해주세요.";
-      passcodeInput.focus();
-      return;
-    }
-
-    try {
-      const hash = await sha256Hex(value);
-      if (hash === PASSCODE_HASH) {
-        window.localStorage.setItem(UNLOCK_KEY, "1");
-        await unlockAndLoad();
-        return;
-      }
-      passcodeMessage.textContent = "패스코드가 맞지 않습니다.";
-      passcodeInput.select();
-    } catch {
-      passcodeMessage.textContent = "이 브라우저에서 확인할 수 없습니다.";
-    }
   }
 
   function monthKey(post) {
@@ -4625,6 +4481,32 @@ APP_JS = """(() => {
     return state.photos.filter((photo) => (photo.child || DEFAULT_CHILD) === state.activeChild);
   }
 
+  // 무작위 배치.
+  //
+  // 고를 때마다 새로 섞으면 안 된다. renderPhotoList 는 "더 보기", 좋아요,
+  // 자녀 전환, 검색마다 다시 도는데 그때마다 순서가 바뀌면 방금 본 사진이
+  // 또 나오고 아직 못 본 사진은 뒤로 밀린다. 6,600장이면 끝까지 못 본다.
+  //
+  // 그래서 씨앗을 하나 잡아 두고 사진마다 (씨앗, 경로)로 같은 숫자를 뽑아
+  // 그 순으로 세운다. 씨앗이 그대로면 순서도 그대로다. 순열을 따로 들고
+  // 있을 필요가 없어서 사진이 늘어도 메모리가 늘지 않는다.
+  let photoSeed = newPhotoSeed();
+
+  function newPhotoSeed() {
+    return (Math.random() * 0xffffffff) >>> 0;
+  }
+
+  // FNV-1a. 암호용이 아니라 섞기용이라 짧고 빠른 것으로 충분하다.
+  function shuffleKey(seed, text) {
+    let hash = (0x811c9dc5 ^ seed) >>> 0;
+    const value = String(text);
+    for (let i = 0; i < value.length; i += 1) {
+      hash ^= value.charCodeAt(i);
+      hash = Math.imul(hash, 0x01000193);
+    }
+    return hash >>> 0;
+  }
+
   function filteredPhotos() {
     const query = normalize(state.query).trim();
     let list = childPhotos().filter((photo) => {
@@ -4632,7 +4514,11 @@ APP_JS = """(() => {
       if (!query) return true;
       return normalize([photo.caption, photo.date].join(" ")).includes(query);
     });
-    if (state.photoSort === "likes") {
+    if (state.photoSort === "random") {
+      list = [...list].sort(
+        (a, b) => shuffleKey(photoSeed, a.src) - shuffleKey(photoSeed, b.src),
+      );
+    } else if (state.photoSort === "likes") {
       list = [...list].sort((a, b) => {
         const la = state.photoLikes[a.src] || 0;
         const lb = state.photoLikes[b.src] || 0;
@@ -4676,6 +4562,10 @@ APP_JS = """(() => {
       '<div class="photo-tools">'
       + `<button class="photo-sort${state.photoSort === "date" ? " is-active" : ""}" type="button" data-sort="date">최신순</button>`
       + `<button class="photo-sort${state.photoSort === "likes" ? " is-active" : ""}" type="button" data-sort="likes">좋아요순</button>`
+      // 이미 무작위일 때는 "다시 섞기"로 바뀐다. 같은 버튼을 또 눌렀는데
+      // 아무 일도 안 일어나면 고장으로 보이고, 다시 섞을 길도 없어진다.
+      + `<button class="photo-sort${state.photoSort === "random" ? " is-active" : ""}" type="button" data-sort="random">`
+      + `${state.photoSort === "random" ? "다시 섞기" : "무작위"}</button>`
       + "</div>"
       + `<div class="photo-grid">${cards}</div>${more}`
     );
@@ -4789,6 +4679,7 @@ APP_JS = """(() => {
 
     const sort = event.target.closest("button[data-sort]");
     if (sort) {
+      if (sort.dataset.sort === "random") photoSeed = newPhotoSeed();
       state.photoSort = sort.dataset.sort;
       window.localStorage.setItem("kidsnote.photoSort", state.photoSort);
       state.photoLimit = PHOTO_PAGE;
@@ -4975,13 +4866,7 @@ APP_JS = """(() => {
     }
   });
 
-  passcodeForm.addEventListener("submit", handlePasscodeSubmit);
-
-  if (window.localStorage.getItem(UNLOCK_KEY) === "1") {
-    unlockAndLoad();
-  } else {
-    passcodeInput.focus();
-  }
+  loadApp();
 })();
 """
 

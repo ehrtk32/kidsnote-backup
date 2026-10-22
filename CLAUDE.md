@@ -93,7 +93,6 @@ mybox/download           10분 URL 발급 (관리자)
   딥링크가 되는 이유가 이것이다.
 - `styles`/`app`은 내용 해시 파일명으로 나가고(`hashed_asset_name`) 매 export마다 옛 파일이
   삭제된다. asset 경로를 수동으로 참조하지 말 것.
-- 사이트에 6자리 가족 패스코드 게이트가 있고 해시가 `APP_JS`에 하드코딩돼 있다.
 
 ## 명령어
 
@@ -232,14 +231,31 @@ npx wrangler pages dev --port 9600 --d1 DB=f3c5379c-7d6b-4bb4-9d42-e5d037b80eed
 
 **관리자 비번은 D1의 `settings` 표에 산다.** `ADMIN_PASSCODE` Pages Secret은 **부트스트랩
 전용**이다 — 그 표에 행이 없을 때만 쓰이고, 사이트에서 한 번 변경하면 그 뒤로는 무시된다.
-Function이 PBKDF2(150k)로 대조하므로 사이트 입구의 가족 패스코드와 달리 실제로 막히고,
-`auth_attempts` 표로 IP당 5회 실패 시 15분 차단한다.
+Function이 PBKDF2로 대조하고 `auth_attempts` 표로 IP당 5회 실패 시 15분 차단한다.
+**반복 횟수는 100,000을 넘기지 말 것** — Workers 상한이고, 넘기면 해시를 *만들* 때만
+`NotSupportedError` 가 난다. 검증은 해시에 적힌 횟수를 읽어 쓰므로 영향이 없어서,
+비번을 실제로 바꾸기 전까지 드러나지 않는다(2026-10-21 에 150k 로 500 이 났다).
 
 새 비번을 잊었다면 행을 지워 시크릿으로 되돌아간다:
 ```bash
 cd static-export
 npx wrangler d1 execute papa_pjh --remote --command \
   "DELETE FROM settings WHERE key='admin_passcode'"
+```
+
+**사이트 입구에 인증이 없다.** 6자리 가족 패스코드 게이트가 있었는데 2026-10-22 에
+없앴다(장식이었고 사용자가 지워 달라고 했다). URL 을 아는 사람은 누구나 본다 —
+의도된 것이다. 댓글·좋아요 쓰기도 열려 있다. 되살리자고 제안하지 말 것.
+
+**로컬에서 재현되지 않는 500 은 `wrangler pages deployment tail` 로 잡는다.**
+로컬 workerd 와 프로덕션 런타임은 제한이 다르다. PBKDF2 150k 가 `pages dev` 에서는
+200 이고 프로덕션에서는 1101 이었다. 로컬이 통과한다고 고쳐진 게 아니다:
+
+```bash
+cd static-export
+DEP=$(npx wrangler pages deployment list --project-name seoi-kidsnote \
+      | grep -oE '[0-9a-f-]{36}' | head -1)
+npx wrangler pages deployment tail "$DEP" --project-name seoi-kidsnote --format json
 ```
 
 **공개 저장소에 실제 아이 사진·이름을 올리지 말 것.** README 스크린샷에 아이 실명·반 이름·
