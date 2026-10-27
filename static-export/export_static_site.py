@@ -880,7 +880,10 @@ INDEX_HTML = """<!doctype html>
       <div class="video-modal-comments" id="videoComments"></div>
       <footer class="video-modal-foot">
         <button class="video-step" id="videoPrev" type="button">‹ 이전</button>
-        <span class="video-step-count" id="videoStepCount"></span>
+        <span class="video-step-mid">
+          <span class="video-like" id="videoLike"></span>
+          <span class="video-step-count" id="videoStepCount"></span>
+        </span>
         <button class="video-step" id="videoNext" type="button">다음 ›</button>
       </footer>
       <footer class="video-modal-foot">
@@ -1819,6 +1822,10 @@ select {
   text-shadow: none;
 }
 
+.badge.upload {
+  background: var(--accent);
+}
+
 .badge.video {
   background: var(--video);
 }
@@ -2139,6 +2146,25 @@ select {
 .video-step-count {
   color: var(--muted);
   font-size: 13px;
+}
+
+/* 목록 행과 영상 상세의 좋아요. `.like-button` 은 기본이 absolute(격자 칸
+   모서리에 붙는 용도)라, 줄 안에 세우려면 흐름으로 되돌려야 한다. */
+.entry-like .like-button,
+.video-like .like-button {
+  position: static;
+}
+
+.entry-row .entry-like {
+  display: inline-flex;
+  flex: none;
+  margin-right: 4px;
+}
+
+.video-step-mid {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
 }
 
 /* ---------- 업로드 ---------- */
@@ -3332,6 +3358,7 @@ APP_JS = """(() => {
   const videoPrev = document.getElementById("videoPrev");
   const videoNext = document.getElementById("videoNext");
   const videoStepCount = document.getElementById("videoStepCount");
+  const videoLike = document.getElementById("videoLike");
   const appShell = document.getElementById("appShell");
   const profilePhoto = document.getElementById("profilePhoto");
   const babyDays = document.getElementById("babyDays");
@@ -3514,11 +3541,15 @@ APP_JS = """(() => {
 
   const newVideos = () => childVideos().filter(isNewVideo);
 
-  // 홈에 들어갈 것들. 새 사진은 따로 넣지 않는다 — 사진은 올라온 글에
-  // 딸려 있어서, 그 글이 이미 홈에 줄로 서 있다. 사진까지 줄을 세우면
-  // 같은 소식이 두 번 보인다.
+  // 홈에 들어갈 것들.
+  //
+  // **키즈노트 사진**은 넣지 않는다 — 그 사진이 실린 글이 이미 홈에 줄로
+  // 서 있어서, 사진까지 세우면 같은 소식이 두 번 보인다.
+  //
+  // **직접 올린 사진**은 넣는다. 딸린 글이 없어서 안 넣으면 홈에서 아예
+  // 안 보이고, 방금 올린 것이 "최신 업데이트"에 없는 게 된다.
   function homeItems() {
-    return [...newVideos(), ...childPosts().filter(isNewPost)];
+    return [...newVideos(), ...newUploads(), ...childPosts().filter(isNewPost)];
   }
 
   // 사진은 자기 날짜를 들고 있다(글에서 물려받는다). 같은 날 알림장 2건에
@@ -3638,7 +3669,7 @@ APP_JS = """(() => {
           : tab.key === UPLOADS_TYPE
             ? childUploads().length
             : tab.key === PHOTOS_TYPE
-              ? childPhotos().length
+              ? galleryItems().length
               : state.counts[tab.key] || 0;
       // 홈은 그 자체가 새 항목 목록이라 빨간 배지를 또 달지 않는다.
       const newCount = tab.key === "home"
@@ -3678,10 +3709,7 @@ APP_JS = """(() => {
 
   // 올린 사진도 영상과 같은 기준이다 — 찍은 날이 아니라 **올린 날**이 새것을
   // 가른다. 몇 년 전 사진을 오늘 올렸으면 오늘 새로 온 소식이 맞다.
-  const newUploads = () => childUploads().filter(
-    (item) => item.created_at
-      && state.recentDateKeys.has(koreaDateKey(new Date(item.created_at))),
-  );
+  const newUploads = () => childUploads().filter(isNewUploadItem);
 
   function filteredVideos() {
     const query = normalize(state.query).trim();
@@ -3855,6 +3883,8 @@ APP_JS = """(() => {
       + `<span class="entry-kicker"><span class="badge video">영상</span>${date}${newMarker}</span>`
       + `<span class="entry-title">${escapeHtml(video.title)}</span>${summary}`
       + "</span></button>"
+      // 버튼 안에 버튼을 넣을 수 없어서 형제로 둔다. 앨범 타일의 하트와 같은 이유다.
+      + `<span class="entry-like">${likeButtonHtml(video.id, "", state.photoLikes[video.id] || 0)}</span>`
       + `<button class="admin-delete" type="button" data-delete-video="${escapeHtml(video.id)}"`
       + ' aria-label="영상 삭제">🗑</button>'
       + "</div>"
@@ -3876,6 +3906,7 @@ APP_JS = """(() => {
     return (
       `<figure class="photo-cell video-cell" data-video-id="${escapeHtml(video.id)}">`
       + thumbOf(video)
+      + likeButtonHtml(video.id, "", state.photoLikes[video.id] || 0)
       + `<figcaption>${escapeHtml(video.title)}${newMarker}</figcaption>`
       + `<button class="admin-delete" type="button" data-delete-video="${escapeHtml(video.id)}"`
       + ' aria-label="영상 삭제">🗑</button>'
@@ -3925,21 +3956,24 @@ APP_JS = """(() => {
     // 홈에서는 새 영상이 글과 같은 목록에 섞인다. 영상은 페이지가 아니라
     // 모달로 열려서 <a> 가 아니라 <button> 이라, 행을 따로 만들어 앞에 붙인다.
     const homeVideos = state.activeType === "home" ? newVideos() : [];
+    const homeUploads = state.activeType === "home" ? newUploads() : [];
 
     listTitle.textContent = activeListLabel();
     const filters = [state.activeMonth, state.query.trim()].filter(Boolean).length;
-    const shown = state.posts.length + homeVideos.length;
+    const shown = state.posts.length + homeVideos.length + homeUploads.length;
     listCount.textContent = filters ? `${shown}개 필터됨` : `${shown}개`;
     renderListCollapseState();
 
-    if (!state.posts.length && !homeVideos.length) {
+    if (!state.posts.length && !homeVideos.length && !homeUploads.length) {
       entryList.innerHTML = state.activeType === "home"
         ? '<div class="empty">최근 등록된 새로운 기록이 없습니다.</div>'
         : '<div class="empty">조건에 맞는 항목이 없습니다.</div>';
       return;
     }
 
-    entryList.innerHTML = homeVideos.map(videoRow).join("") + state.posts.map((post) => {
+    entryList.innerHTML = homeVideos.map(videoRow).join("")
+      + homeUploads.map(uploadRow).join("")
+      + state.posts.map((post) => {
       const thumb = post.thumbnail_url ? ` style="background-image: url('${escapeHtml(post.thumbnail_url)}')"` : "";
       const fallback = post.thumbnail_url ? "" : escapeHtml(post.type_label);
       const title = displayTitle(post.title);
@@ -4913,6 +4947,7 @@ APP_JS = """(() => {
     videoPrev.hidden = !many;
     videoNext.hidden = !many;
     videoStepCount.textContent = many ? `${index + 1} / ${list.length}` : "";
+    videoLike.innerHTML = likeButtonHtml(id, "", state.photoLikes[id] || 0);
     if (!many) return;
     videoPrev.disabled = index <= 0;
     videoNext.disabled = index >= list.length - 1;
@@ -5048,21 +5083,55 @@ APP_JS = """(() => {
     return hash >>> 0;
   }
 
+  // 모아보기는 세 군데서 온 것을 한 화면에 모은다 — 키즈노트 사진, 직접 올린
+  // 사진, 영상. `kind` 가 무엇을 그릴지와 눌렀을 때 어디로 갈지를 가른다.
+  //
+  // `key` 는 좋아요를 세는 단위다. photo_likes 의 photo_id 는 길이만 제한된
+  // 자유 문자열이라 사진 경로든 영상 id 든 그대로 쓸 수 있다 — 표를 더 만들
+  // 이유가 없다.
+  function galleryItems() {
+    return [
+      ...childPhotos().map((photo) => ({
+        kind: "photo",
+        key: photo.src,
+        src: photo.src,
+        date: photo.date || "",
+        caption: photo.caption || "",
+        post_id: photo.post_id,
+      })),
+      ...childUploads().map((item) => ({
+        kind: "upload",
+        key: item.src,
+        src: item.src,
+        date: uploadDate(item),
+        caption: item.caption || "",
+      })),
+      ...childVideos().map((video) => ({
+        kind: "video",
+        key: video.id,
+        id: video.id,
+        source: video.source,
+        date: video.date || (video.created_at ? koreaDateKey(new Date(video.created_at)) : ""),
+        caption: video.title || "",
+      })),
+    ];
+  }
+
   function filteredPhotos() {
     const query = normalize(state.query).trim();
-    let list = childPhotos().filter((photo) => {
-      if (state.activeMonth && String(photo.date || "").slice(0, 7) !== state.activeMonth) return false;
+    let list = galleryItems().filter((item) => {
+      if (state.activeMonth && String(item.date || "").slice(0, 7) !== state.activeMonth) return false;
       if (!query) return true;
-      return normalize([photo.caption, photo.date].join(" ")).includes(query);
+      return normalize([item.caption, item.date].join(" ")).includes(query);
     });
     if (state.photoSort === "random") {
       list = [...list].sort(
-        (a, b) => shuffleKey(photoSeed, a.src) - shuffleKey(photoSeed, b.src),
+        (a, b) => shuffleKey(photoSeed, a.key) - shuffleKey(photoSeed, b.key),
       );
     } else if (state.photoSort === "likes") {
       list = [...list].sort((a, b) => {
-        const la = state.photoLikes[a.src] || 0;
-        const lb = state.photoLikes[b.src] || 0;
+        const la = state.photoLikes[a.key] || 0;
+        const lb = state.photoLikes[b.key] || 0;
         if (lb !== la) return lb - la;
         return String(b.date).localeCompare(String(a.date));
       });
@@ -5327,6 +5396,29 @@ APP_JS = """(() => {
       + "</div>";
   }
 
+  // 홈에 서는 올린 사진 한 줄. 글·영상과 같은 .entry 틀을 쓰되 사진이
+  // 썸네일 자리에 들어간다. 눌러도 갈 상세가 없으므로 사진 탭으로 보낸다.
+  function uploadRow(item) {
+    const newMarker = isNewUploadItem(item) ? '<span class="new-pill">NEW</span>' : "";
+    return (
+      '<div class="entry-row">'
+      + `<button class="entry" type="button" data-open-uploads="1">`
+      + `<span class="entry-thumb" style="background-image: url('${escapeHtml(item.src)}')"></span>`
+      + "<span>"
+      + `<span class="entry-kicker"><span class="badge upload">사진</span>`
+      + `<span>${escapeHtml(uploadDate(item))}</span>${newMarker}</span>`
+      + `<span class="entry-title">${escapeHtml(item.caption || item.file_name || "올린 사진")}</span>`
+      + "</span></button>"
+      + `<span class="entry-like">${likeButtonHtml(item.src, "", state.photoLikes[item.src] || 0)}</span>`
+      + `<button class="admin-delete" type="button" data-delete-upload="${escapeHtml(item.id)}"`
+      + ' aria-label="사진 내리기">🗑</button>'
+      + "</div>"
+    );
+  }
+
+  const isNewUploadItem = (item) => Boolean(item.created_at)
+    && state.recentDateKeys.has(koreaDateKey(new Date(item.created_at)));
+
   function renderUploadList() {
     const items = childUploads();
     listTitle.textContent = "올린 사진";
@@ -5352,6 +5444,7 @@ APP_JS = """(() => {
     entryList.innerHTML = bar + warn + `<div class="photo-grid">${items.map((item, index) => (
       `<figure class="photo-cell${item.original_missing ? " is-partial" : ""}" data-upload-index="${index}">`
       + `<img src="${escapeHtml(item.src)}" alt="${escapeHtml(item.caption || "")}" loading="lazy">`
+      + likeButtonHtml(item.src, "", state.photoLikes[item.src] || 0)
       + `<figcaption>${escapeHtml(item.caption || uploadDate(item))}</figcaption>`
       + `<button class="admin-delete" type="button" data-delete-upload="${escapeHtml(item.id)}"`
       + ' aria-label="사진 내리기">🗑</button>'
@@ -5374,25 +5467,37 @@ APP_JS = """(() => {
   function renderPhotoList() {
     const photos = filteredPhotos();
     const filters = [state.activeMonth, state.query.trim()].filter(Boolean).length;
-    listTitle.textContent = "사진 모아보기";
-    listCount.textContent = filters ? `${photos.length}장 필터됨` : `${photos.length}장`;
+    listTitle.textContent = "모아보기";
+    listCount.textContent = filters ? `${photos.length}개 필터됨` : `${photos.length}개`;
     renderListCollapseState();
 
     if (!photos.length) {
       entryList.innerHTML = state.photosLoaded
-        ? `<div class="empty">${escapeHtml(activeChild().name)} 사진이 아직 없습니다.</div>`
-        : '<div class="error">사진 목록을 불러오지 못했습니다.</div>';
+        ? `<div class="empty">${escapeHtml(activeChild().name)} 사진·영상이 아직 없습니다.</div>`
+        : '<div class="error">목록을 불러오지 못했습니다.</div>';
       return;
     }
 
     const shown = photos.slice(0, state.photoLimit);
-    const cards = shown.map((photo, index) => (
-      `<figure class="photo-cell" data-photo-index="${index}">`
-      + `<img src="${escapeHtml(photo.src)}" alt="${escapeHtml(photo.caption || "")}" loading="lazy">`
-      + likeButtonHtml(photo.src, photo.post_id, state.photoLikes[photo.src] || 0)
-      + `<figcaption>${escapeHtml(photo.date || "")}</figcaption>`
-      + "</figure>"
-    )).join("");
+
+    // 영상은 라이트박스가 아니라 영상 화면으로 간다. 그래서 라이트박스
+    // 번호는 사진에만 매긴다 — 영상 자리까지 세면 번호가 어긋난다.
+    const lightboxOf = new Map();
+    shown.forEach((item) => {
+      if (item.kind !== "video") lightboxOf.set(item, lightboxOf.size);
+    });
+
+    const cards = shown.map((item) => {
+      const like = likeButtonHtml(item.key, item.post_id, state.photoLikes[item.key] || 0);
+      const caption = `<figcaption>${escapeHtml(item.caption || item.date || "")}</figcaption>`;
+      if (item.kind === "video") {
+        return `<figure class="photo-cell video-cell" data-video-id="${escapeHtml(item.id)}">`
+          + thumbOf(item) + like + caption + "</figure>";
+      }
+      return `<figure class="photo-cell" data-photo-index="${lightboxOf.get(item)}">`
+        + `<img src="${escapeHtml(item.src)}" alt="${escapeHtml(item.caption || "")}" loading="lazy">`
+        + like + caption + "</figure>";
+    }).join("");
 
     const more = photos.length > shown.length
       ? `<button class="photo-more" type="button" id="photoMore">더 보기 (${photos.length - shown.length}장 남음)</button>`
@@ -5410,8 +5515,11 @@ APP_JS = """(() => {
       + `<div class="photo-grid">${cards}</div>${more}`
     );
 
-    // 모아보기에서 사진을 누르면 라이트박스로 크게 본다.
-    state.lightboxItems = shown.map((photo) => ({
+    // 영상 썸네일은 보이는 것만 받아 온다.
+    loadVisibleThumbs();
+
+    // 모아보기에서 사진을 누르면 라이트박스로 크게 본다. 영상은 빠진다.
+    state.lightboxItems = shown.filter((item) => item.kind !== "video").map((photo) => ({
       src: photo.src,
       alt: photo.caption || "",
       caption: photo.caption || photo.date || "",
@@ -5513,6 +5621,16 @@ APP_JS = """(() => {
     if (del) {
       event.preventDefault();
       deleteVideo(del.dataset.deleteVideo);
+      return;
+    }
+
+    const toUploads = event.target.closest("[data-open-uploads]");
+    if (toUploads) {
+      event.preventDefault();
+      // 올린 사진은 상세 페이지가 없다. 홈에서 누르면 사진 탭으로 보낸다.
+      state.activeType = UPLOADS_TYPE;
+      window.localStorage.setItem("kidsnote.activeType", state.activeType);
+      refreshView();
       return;
     }
 
@@ -5631,6 +5749,14 @@ APP_JS = """(() => {
   });
 
   videoModalClose.addEventListener("click", leaveVideo);
+  videoModal.addEventListener("click", (event) => {
+    const like = event.target.closest(".like-button");
+    if (!like) return;
+    event.preventDefault();
+    event.stopPropagation();
+    bumpLike(like);
+  });
+
   videoPrev.addEventListener("click", () => stepVideo(-1));
   videoNext.addEventListener("click", () => stepVideo(1));
 
