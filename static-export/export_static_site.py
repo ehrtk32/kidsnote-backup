@@ -2540,9 +2540,14 @@ body.modal-open {
 /* 캡션과 좋아요가 사진 아래 가장자리에 함께 뜬다. 밝은 사진 위에서도
    글자가 읽혀야 하므로 반투명 판을 깔았다. */
 .lightbox-caption-bar {
-  left: 50%;
+  /* left:50% + translateX 로 가운데를 맞추면 가용 폭이 "컨테이너 - left",
+     즉 절반으로 깎인다. 390px 화면에서 캡션이 두 줄로 쪼개졌다. 양쪽을 다
+     묶고 margin auto 로 가운데를 맞춰야 폭이 온전히 남는다. */
+  left: 16px;
+  right: 16px;
   bottom: 16px;
-  transform: translateX(-50%);
+  width: max-content;
+  margin: 0 auto;
   max-width: calc(100% - 32px);
   display: flex;
   align-items: center;
@@ -2633,9 +2638,12 @@ body.modal-open {
 }
 
 .lightbox-toolbar {
+  /* 캡션 바와 같은 이유로 양쪽을 묶는다. */
   top: 12px;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 12px;
+  right: 12px;
+  width: max-content;
+  margin: 0 auto;
   display: flex;
   gap: 6px;
   padding: 4px;
