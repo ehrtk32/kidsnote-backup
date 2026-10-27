@@ -771,13 +771,18 @@ INDEX_HTML = """<!doctype html>
       </section>
       <section class="dashboard-grid">
         <aside class="list-panel">
-          <button class="panel-head panel-toggle" id="listToggle" type="button" aria-expanded="true" aria-controls="entryList">
-            <span class="panel-title" id="listTitle">알림장</span>
-            <span class="panel-head-right">
-              <span class="panel-meta" id="listCount">0</span>
-              <span class="panel-chevron" id="listChevron" aria-hidden="true">▾</span>
-            </span>
-          </button>
+          <div class="panel-head-row">
+            <button class="panel-head panel-toggle" id="listToggle" type="button" aria-expanded="true" aria-controls="entryList">
+              <span class="panel-title" id="listTitle">알림장</span>
+              <span class="panel-head-right">
+                <span class="panel-meta" id="listCount">0</span>
+                <span class="panel-chevron" id="listChevron" aria-hidden="true">▾</span>
+              </span>
+            </button>
+            <!-- 제목 줄 자체가 <button> 이라 그 안에 버튼을 못 넣는다.
+                 형제로 두고 한 줄처럼 보이게 묶는다. -->
+            <span class="panel-head-tools" id="listTools"></span>
+          </div>
           <div class="entry-list" id="entryList"></div>
         </aside>
         <article class="detail-panel" id="detailPanel" hidden>
@@ -1455,6 +1460,55 @@ select {
   font-weight: 760;
 }
 
+/* 제목 줄. 접기 버튼이 남는 폭을 전부 먹고, 도구는 오른쪽에 붙는다. */
+.panel-head-row {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--line);
+}
+
+.panel-head-row .panel-head {
+  flex: 1;
+  min-width: 0;
+  border-bottom: 0;
+}
+
+.panel-head-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 10px;
+}
+
+.panel-head-tools:empty {
+  display: none;
+}
+
+/* 아이콘 버튼. 손가락으로 누를 34px 을 확보하되 아이콘은 18px 로 둔다. */
+.view-pick {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.view-pick svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+  fill: currentColor;
+}
+
+.view-pick.is-active {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
 .panel-head-right {
   display: inline-flex;
   align-items: center;
@@ -2072,33 +2126,6 @@ select {
 }
 
 /* ---------- 관리자 모드 ---------- */
-/* 목록/그리드 전환. 사진 모아보기의 정렬 버튼과 같은 모양을 쓰되
-   오른쪽에 붙인다. */
-.view-tools {
-  display: flex;
-  justify-content: flex-end;
-  gap: 6px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--line);
-}
-
-.view-pick {
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 6px 14px;
-  background: var(--surface);
-  color: var(--muted);
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.view-pick.is-active {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--accent-strong);
-  font-weight: 650;
-}
-
 /* 영상 그리드. 사진 격자를 그대로 쓰되 칸이 가로로 길다 — 영상은 대부분
    가로이고, 세로로 길게 자르면 무슨 장면인지 안 보인다. */
 .video-grid .photo-cell {
@@ -3296,6 +3323,7 @@ APP_JS = """(() => {
   const detailPanel = document.getElementById("detailPanel");
   const listTitle = document.getElementById("listTitle");
   const listCount = document.getElementById("listCount");
+  const listTools = document.getElementById("listTools");
   const listPanel = document.querySelector(".list-panel");
   const listToggle = document.getElementById("listToggle");
   const listChevron = document.getElementById("listChevron");
@@ -3891,12 +3919,29 @@ APP_JS = """(() => {
     );
   }
 
-  function videoViewToolsHtml() {
+  // 목록/그리드 아이콘. 글자로 두면 제목 줄이 좁은 폰에서 제목을 밀어낸다.
+  const VIEW_ICON = {
+    list: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="4" height="4" rx="1"/>'
+      + '<rect x="9" y="6" width="12" height="2" rx="1"/><rect x="3" y="10" width="4" height="4" rx="1"/>'
+      + '<rect x="9" y="11" width="12" height="2" rx="1"/><rect x="3" y="15" width="4" height="4" rx="1"/>'
+      + '<rect x="9" y="16" width="12" height="2" rx="1"/></svg>',
+    grid: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="8" height="8" rx="2"/>'
+      + '<rect x="13" y="3" width="8" height="8" rx="2"/><rect x="3" y="13" width="8" height="8" rx="2"/>'
+      + '<rect x="13" y="13" width="8" height="8" rx="2"/></svg>',
+  };
+
+  function renderListTools() {
+    // 영상 탭에서만 쓴다. 다른 탭에서는 비워야 제목 줄이 원래대로 돌아온다.
+    if (state.activeType !== VIDEO_TYPE || state.selectedId !== null) {
+      listTools.innerHTML = "";
+      return;
+    }
     const pick = (key, label) => (
       `<button class="view-pick${state.videoView === key ? " is-active" : ""}" type="button"`
-      + ` data-video-view="${key}" aria-pressed="${state.videoView === key}">${label}</button>`
+      + ` data-video-view="${key}" aria-pressed="${state.videoView === key}"`
+      + ` aria-label="${label}" title="${label}">${VIEW_ICON[key]}</button>`
     );
-    return '<div class="view-tools">' + pick("list", "목록") + pick("grid", "그리드") + "</div>";
+    listTools.innerHTML = pick("list", "목록으로 보기") + pick("grid", "그리드로 보기");
   }
 
   // 그리드 칸. 사진 격자와 같은 틀을 쓰되 제목이 사진 위에 얹힌다 —
@@ -3933,7 +3978,6 @@ APP_JS = """(() => {
     }
 
     entryList.innerHTML = uploadBarHtml("video/*", "영상 업로드")
-      + videoViewToolsHtml()
       + (state.videoView === "grid"
         ? `<div class="photo-grid video-grid">${videos.map(videoCell).join("")}</div>`
         : videos.map(videoRow).join(""));
@@ -3941,6 +3985,7 @@ APP_JS = """(() => {
   }
 
   function renderList() {
+    renderListTools();
     if (state.activeType === VIDEO_TYPE) {
       renderVideoList();
       return;
@@ -5634,15 +5679,6 @@ APP_JS = """(() => {
       return;
     }
 
-    const view = event.target.closest("button[data-video-view]");
-    if (view) {
-      event.preventDefault();
-      state.videoView = view.dataset.videoView;
-      window.localStorage.setItem("kidsnote.videoView", state.videoView);
-      renderVideoList();
-      return;
-    }
-
     const pick = event.target.closest("button[data-upload-accept]");
     if (pick) {
       event.preventDefault();
@@ -5780,6 +5816,14 @@ APP_JS = """(() => {
   }, { passive: true });
   videoModal.addEventListener("click", (event) => {
     if (event.target === videoModal) leaveVideo();
+  });
+
+  listTools.addEventListener("click", (event) => {
+    const view = event.target.closest("button[data-video-view]");
+    if (!view) return;
+    state.videoView = view.dataset.videoView;
+    window.localStorage.setItem("kidsnote.videoView", state.videoView);
+    renderList();
   });
 
   listToggle.addEventListener("click", toggleList);
