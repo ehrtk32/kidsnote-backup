@@ -2176,6 +2176,23 @@ body.is-admin .admin-delete:hover {
   background: var(--surface-soft);
 }
 
+/* 격자 칸 안에서는 흐름에 끼면 안 된다 — 사진 아래로 밀려나 칸이 늘어진다.
+   좋아요가 오른쪽 아래를 쓰므로 오른쪽 위에 둔다. */
+body.is-admin .photo-cell .admin-delete {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  width: 32px;
+  height: 32px;
+  border-color: rgba(255, 255, 255, .3);
+  background: rgba(16, 18, 17, .62);
+}
+
+body.is-admin .photo-cell .admin-delete:hover {
+  border-color: var(--danger);
+  background: rgba(16, 18, 17, .82);
+}
+
 .entry-row {
   display: flex;
   align-items: center;
@@ -2621,6 +2638,10 @@ body.modal-open {
 .lightbox-image-wrap {
   position: absolute;
   inset: 0;
+  /* 가로 손짓은 우리가 쓴다(사진 넘기기). 이게 없으면 브라우저가 뒤로가기
+     제스처로 가져가는 기기가 있다. 확대 중에는 아래의 is-zoomed 가 none 으로
+     덮어써서 사진을 끌어 옮길 수 있다. */
+  touch-action: pan-y;
   overflow: auto;
   overscroll-behavior: contain;
   display: flex;
@@ -3752,7 +3773,7 @@ APP_JS = """(() => {
     if (!videos.length) {
       // 지금 자녀 기준으로 판단해야 한다. 전체 영상 수로 보면 살구처럼
       // 영상이 하나도 없는 자녀에게 "필터 결과 없음"이라고 말하게 된다.
-      entryList.innerHTML = uploadBarHtml("video/*", "영상 올리기") + (childVideos().length
+      entryList.innerHTML = uploadBarHtml("video/*", "영상 업로드") + (childVideos().length
         ? '<div class="empty">조건에 맞는 영상이 없습니다.</div>'
         : state.videosLoaded
           ? `<div class="empty">${escapeHtml(activeChild().name)} 영상이 아직 없습니다.</div>`
@@ -3760,7 +3781,7 @@ APP_JS = """(() => {
       return;
     }
 
-    entryList.innerHTML = uploadBarHtml("video/*", "영상 올리기")
+    entryList.innerHTML = uploadBarHtml("video/*", "영상 업로드")
       + videos.map(videoRow).join("");
     loadVisibleThumbs();
   }
@@ -4257,6 +4278,48 @@ APP_JS = """(() => {
     }
     state.lightboxDrag = null;
     lightboxImageWrap.classList.remove("is-dragging");
+  }
+
+  // 모바일에서 좌우로 밀어 넘기기. 화살표는 손가락으로 겨누기엔 작고,
+  // 사진을 넘기는 손짓은 원래 미는 것이다.
+  //
+  // 확대 중에는 끈다 — 그때 같은 손짓은 사진을 끌어 옮기는 동작이고,
+  // 둘을 같이 켜면 확대해서 들여다보다가 사진이 넘어가 버린다.
+  const SWIPE_MIN_PX = 48;
+  const SWIPE_MAX_MS = 700;
+  let swipeStart = null;
+  let swipedAt = 0;
+
+  function startSwipe(event) {
+    // canDragLightboxImage() 를 쓰지 않는다. 그건 "확대했고 **실제로 넘친다**"
+    // 라서, 작은 사진을 확대하면 넘치지 않아 스와이프가 살아 있다. 확대해 놓고
+    // 밀었는데 다음 사진으로 넘어가면 당황스럽다 — 확대 중이면 그냥 끈다.
+    if (lightbox.hidden || event.touches.length !== 1
+        || state.lightboxZoom > LIGHTBOX_MIN_ZOOM) {
+      swipeStart = null;
+      return;
+    }
+    const touch = event.touches[0];
+    swipeStart = { x: touch.clientX, y: touch.clientY, at: Date.now() };
+  }
+
+  function endSwipe(event) {
+    const start = swipeStart;
+    swipeStart = null;
+    if (!start || state.lightboxItems.length < 2) return;
+
+    const touch = event.changedTouches && event.changedTouches[0];
+    if (!touch) return;
+    const dx = touch.clientX - start.x;
+    const dy = touch.clientY - start.y;
+
+    // 세로로 더 많이 움직였으면 넘기지 않는다. 스크롤하려던 손짓이다.
+    if (Math.abs(dx) < SWIPE_MIN_PX || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    if (Date.now() - start.at > SWIPE_MAX_MS) return;
+
+    // 왼쪽으로 밀면 다음 사진. 종이를 넘기는 방향과 같다.
+    moveLightbox(dx < 0 ? 1 : -1);
+    swipedAt = Date.now();
   }
 
   function handleLightboxWheel(event) {
@@ -5050,6 +5113,12 @@ APP_JS = """(() => {
       }
     }
 
+    // 다시 그리기 **전에** 풀어야 한다. 버튼의 disabled 가 그리는 시점의
+    // uploadBusy 로 정해지므로, 순서가 뒤바뀌면 비활성인 채로 남고 새로고침
+    // 전까지 다시 못 올린다.
+    uploadBusy = false;
+    await keepScreenAwake(false);
+
     await Promise.all([loadUploads(), loadVideos()]);
     recomputeCounts();
     renderTabs();
@@ -5066,8 +5135,6 @@ APP_JS = """(() => {
       failures.length > 0,
     );
 
-    uploadBusy = false;
-    await keepScreenAwake(false);
     // 실패가 있으면 읽을 시간을 더 준다.
     window.setTimeout(() => { uploadSheet.hidden = true; }, failures.length ? 9000 : 2600);
   }
@@ -5086,7 +5153,7 @@ APP_JS = """(() => {
     listCount.textContent = `${items.length}장`;
     renderListCollapseState();
 
-    const bar = uploadBarHtml("image/*,video/*", "사진·영상 올리기");
+    const bar = uploadBarHtml("image/*", "사진 업로드");
 
     if (!items.length) {
       // 아직 아무도 안 올린 것과, API 가 죽어서 못 받은 것은 다른 상황이다.
@@ -5443,8 +5510,11 @@ APP_JS = """(() => {
     // 사진 바깥을 누르면 닫힌다. 예전에는 여백이 lightbox 자신이었지만 이제
     // 사진 틀이 화면을 다 덮으므로, 틀을 눌렀고 사진이 아닌 경우로 본다.
     // 확대 중에는 끄지 않는다 — 끌어서 옮기다 손을 떼면 닫혀 버린다.
+    // 민 직후에는 닫지 않는다. 기기에 따라 스와이프 끝에 click 이 한 번
+    // 따라오는데, 그게 바깥 클릭으로 잡히면 넘기자마자 창이 닫힌다.
     const onBackdrop = event.target === lightboxImageWrap
-      && state.lightboxZoom <= LIGHTBOX_MIN_ZOOM;
+      && state.lightboxZoom <= LIGHTBOX_MIN_ZOOM
+      && Date.now() - swipedAt > 400;
     if (onBackdrop || event.target === lightbox || event.target.closest(".lightbox-close")) {
       closeLightbox();
     }
@@ -5461,6 +5531,10 @@ APP_JS = """(() => {
     toggleLightboxZoom(lightboxAnchorFromEvent(event));
   });
   lightboxImageWrap.addEventListener("wheel", handleLightboxWheel, { passive: false });
+  lightboxImageWrap.addEventListener("touchstart", startSwipe, { passive: true });
+  lightboxImageWrap.addEventListener("touchend", endSwipe, { passive: true });
+  lightboxImageWrap.addEventListener("touchcancel", () => { swipeStart = null; }, { passive: true });
+
   lightboxImageWrap.addEventListener("pointerdown", startLightboxDrag);
   lightboxImageWrap.addEventListener("pointermove", moveLightboxDrag);
   lightboxImageWrap.addEventListener("pointerup", endLightboxDrag);
