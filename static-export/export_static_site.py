@@ -1257,6 +1257,30 @@ select {
   padding: 20px 14px;
 }
 
+/* 탭 묶음의 머리글. 누를 수 없는 라벨이라 탭과 확실히 달라 보여야 한다 —
+   같은 크기로 두면 비활성 탭처럼 보인다. */
+.tab-group {
+  margin: 10px 0 2px;
+  padding: 0 10px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 760;
+  letter-spacing: .06em;
+}
+
+.tab-group:first-child {
+  margin-top: 0;
+}
+
+/* 그룹에 속하지 않는데 그룹 뒤에 오는 탭. 머리글이 없어서 앞 묶음에 딸린
+   것처럼 보이므로 선으로 끊는다. */
+.tab.is-standalone {
+  margin-top: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+  border-radius: 0 0 7px 7px;
+}
+
 .tab {
   position: relative;
   width: 100%;
@@ -2746,6 +2770,25 @@ body.modal-open {
     padding: 6px 8px;
   }
 
+  /* 가로 4열 그리드라 머리글이 한 칸만 차지하면 탭 사이에 끼어 버린다.
+     줄을 통째로 쓰게 하고, 메뉴가 세로로 길어지지 않게 얇게 둔다. */
+  .tab-group {
+    grid-column: 1 / -1;
+    margin: 6px 0 0;
+    padding: 0 2px;
+    font-size: 10px;
+  }
+
+  /* 가로 배열에서는 위쪽 선이 한 칸에만 그어져 어색하다. 세로 선으로 끊는다. */
+  .tab.is-standalone {
+    margin-top: 0;
+    padding-top: 6px;
+    border-top: 0;
+    border-left: 1px solid var(--line);
+    border-radius: 7px;
+    padding-left: 10px;
+  }
+
   .tab-icon {
     width: 24px;
     height: 24px;
@@ -2922,13 +2965,22 @@ APP_JS = """(() => {
   ];
   const DEFAULT_CHILD = "seoi";
 
+  // 탭은 출처로 묶는다. 키즈노트가 보내 준 것(배치가 매일 다시 만든다)과
+  // 우리가 직접 올린 것(D1 에 남는다)은 성격이 다르다 — 섞여 있으면 "이 사진이
+  // 어디서 온 건지"를 화면만 보고는 알 수 없다. 모아보기는 그 둘을 한 화면에
+  // 모으는 자리라 그룹 밖 맨 아래에 둔다.
+  //
+  // `key` 는 URL(?type=)과 저장된 상태가 쓰므로 바꾸지 말 것. 라벨만 바꾼다 —
+  // `photos` 의 라벨이 "사진"에서 "모아보기"로 바뀐 것이 그 예다.
   const tabs = [
     { key: "home", label: "홈", icon: "/assets/home.svg" },
-    { key: "daily", label: "알림장", icon: "/assets/daily.svg" },
-    { key: "album", label: "앨범", icon: "/assets/album.svg" },
-    { key: "announcement", label: "공지", icon: "/assets/announcement.svg" },
-    { key: "video", label: "영상", icon: "/assets/video.svg" },
-    { key: "photos", label: "사진", icon: "/assets/photos.svg" },
+    { key: "daily", label: "알림장", icon: "/assets/daily.svg", group: "키즈노트" },
+    { key: "album", label: "앨범", icon: "/assets/album.svg", group: "키즈노트" },
+    { key: "announcement", label: "공지", icon: "/assets/announcement.svg", group: "키즈노트" },
+    { key: "video", label: "영상", icon: "/assets/video.svg", group: "업로드" },
+    { key: "uploads", label: "사진", icon: "/assets/upload.svg", group: "업로드" },
+    // 모아보기는 양쪽 사진을 한 화면에 모으는 자리라 어느 그룹에도 안 들어간다.
+    { key: "photos", label: "모아보기", icon: "/assets/photos.svg" },
   ];
   // Videos are not Notion posts: no detail route, no NEW pill, no month
   // filter. The tab reuses the list panel but takes its items from a
@@ -2936,6 +2988,7 @@ APP_JS = """(() => {
   const VIDEO_TYPE = "video";
   // 사진 모아보기. 글 목록이 아니라 사진 단위라 목록 경로가 또 갈린다.
   const PHOTOS_TYPE = "photos";
+  const UPLOADS_TYPE = "uploads";
   const PHOTO_PAGE = 120;
 
   // 좋아요 아이콘. currentColor 라 버튼 색을 그대로 따라간다.
@@ -2977,6 +3030,8 @@ APP_JS = """(() => {
     videosLoaded: false,
     photos: [],
     photosLoaded: false,
+    uploads: [],
+    uploadsLoaded: false,
     photoLikes: {},   // photo_id → 누른 횟수
     photoSort: window.localStorage.getItem("kidsnote.photoSort") || "date",
     photoLimit: PHOTO_PAGE,
@@ -3346,22 +3401,36 @@ APP_JS = """(() => {
 
   function renderTabs() {
     const detailRoute = state.selectedId !== null;
+    let shownGroup = null;
     tabsNode.innerHTML = tabs.map((tab) => {
+      // 그룹이 바뀔 때만 머리글을 낸다. 탭마다 달면 같은 말이 반복된다.
+      const heading = tab.group && tab.group !== shownGroup
+        ? `<p class="tab-group">${escapeHtml(tab.group)}</p>`
+        : "";
+      // 그룹 뒤에 그룹 없는 탭이 오면(모아보기) 앞 그룹에 딸린 것처럼 보인다.
+      // 머리글이 없으니 선으로 끊어 준다.
+      const standalone = !tab.group && shownGroup ? " is-standalone" : "";
+      shownGroup = tab.group || null;
+
       const count = tab.key === "home"
         ? homeItems().length
         : tab.key === VIDEO_TYPE
           ? childVideos().length
-          : tab.key === PHOTOS_TYPE
-            ? childPhotos().length
-            : state.counts[tab.key] || 0;
+          : tab.key === UPLOADS_TYPE
+            ? childUploads().length
+            : tab.key === PHOTOS_TYPE
+              ? childPhotos().length
+              : state.counts[tab.key] || 0;
       // 홈은 그 자체가 새 항목 목록이라 빨간 배지를 또 달지 않는다.
       const newCount = tab.key === "home"
         ? 0
         : tab.key === VIDEO_TYPE
           ? newVideos().length
-          : tab.key === PHOTOS_TYPE
-            ? newPhotos().length
-            : state.newCounts[tab.key] || 0;
+          : tab.key === UPLOADS_TYPE
+            ? newUploads().length
+            : tab.key === PHOTOS_TYPE
+              ? newPhotos().length
+              : state.newCounts[tab.key] || 0;
       const content = (
         `<span class="tab-icon" aria-hidden="true"><img src="${tab.icon}" alt=""></span>`
         + `<span class="tab-label">${tab.label}</span>`
@@ -3370,10 +3439,11 @@ APP_JS = """(() => {
       );
       if (detailRoute) {
         const current = tab.key === state.activeType ? ' aria-current="page"' : "";
-        return `<a class="tab" href="/?type=${tab.key}"${current}>${content}</a>`;
+        return `${heading}<a class="tab${standalone}" href="/?type=${tab.key}"${current}>${content}</a>`;
       }
       return (
-        `<button class="tab" type="button" data-type="${tab.key}" aria-selected="${tab.key === state.activeType ? "true" : "false"}">`
+        heading
+        + `<button class="tab${standalone}" type="button" data-type="${tab.key}" aria-selected="${tab.key === state.activeType ? "true" : "false"}">`
         + `${content}</button>`
       );
     }).join("");
@@ -3382,6 +3452,17 @@ APP_JS = """(() => {
   function childVideos() {
     return state.videos.filter((video) => (video.child || DEFAULT_CHILD) === state.activeChild);
   }
+
+  function childUploads() {
+    return state.uploads.filter((item) => (item.child || DEFAULT_CHILD) === state.activeChild);
+  }
+
+  // 올린 사진도 영상과 같은 기준이다 — 찍은 날이 아니라 **올린 날**이 새것을
+  // 가른다. 몇 년 전 사진을 오늘 올렸으면 오늘 새로 온 소식이 맞다.
+  const newUploads = () => childUploads().filter(
+    (item) => item.created_at
+      && state.recentDateKeys.has(koreaDateKey(new Date(item.created_at))),
+  );
 
   function filteredVideos() {
     const query = normalize(state.query).trim();
@@ -3402,7 +3483,8 @@ APP_JS = """(() => {
 
   function applyFilters() {
     const query = normalize(state.query).trim();
-    if (state.activeType === VIDEO_TYPE || state.activeType === PHOTOS_TYPE) {
+    if (state.activeType === VIDEO_TYPE || state.activeType === PHOTOS_TYPE
+        || state.activeType === UPLOADS_TYPE) {
       state.posts = [];
       return;
     }
@@ -3589,6 +3671,10 @@ APP_JS = """(() => {
     }
     if (state.activeType === PHOTOS_TYPE) {
       renderPhotoList();
+      return;
+    }
+    if (state.activeType === UPLOADS_TYPE) {
+      renderUploadList();
       return;
     }
     // 홈에서는 새 영상이 글과 같은 목록에 섞인다. 영상은 페이지가 아니라
@@ -4546,6 +4632,20 @@ APP_JS = """(() => {
     }
   }
 
+  async function loadUploads() {
+    try {
+      const response = await fetch("/api/uploads", { headers: { accept: "application/json" } });
+      const type = response.headers.get("content-type") || "";
+      if (!response.ok || !type.includes("application/json")) throw new Error("uploads api");
+      const payload = await response.json();
+      state.uploads = payload.uploads || [];
+      state.uploadsLoaded = true;
+    } catch {
+      state.uploads = [];
+      state.uploadsLoaded = false;
+    }
+  }
+
   async function loadPhotos() {
     try {
       const response = await fetch("/data/photos.json");
@@ -4626,6 +4726,28 @@ APP_JS = """(() => {
       list = [...list].sort((a, b) => String(b.date).localeCompare(String(a.date)));
     }
     return list;
+  }
+
+  function renderUploadList() {
+    const items = childUploads();
+    listTitle.textContent = "올린 사진";
+    listCount.textContent = `${items.length}장`;
+    renderListCollapseState();
+
+    if (!items.length) {
+      // 아직 아무도 안 올린 것과, API 가 죽어서 못 받은 것은 다른 상황이다.
+      entryList.innerHTML = state.uploadsLoaded
+        ? `<div class="empty">${escapeHtml(activeChild().name)} 사진을 아직 올리지 않았습니다.</div>`
+        : '<div class="empty">올린 사진이 아직 없습니다.</div>';
+      return;
+    }
+
+    entryList.innerHTML = `<div class="photo-grid">${items.map((item, index) => (
+      `<figure class="photo-cell" data-upload-index="${index}">`
+      + `<img src="${escapeHtml(item.src)}" alt="${escapeHtml(item.caption || "")}" loading="lazy">`
+      + `<figcaption>${escapeHtml(item.caption || item.date || "")}</figcaption>`
+      + "</figure>"
+    )).join("")}</div>`;
   }
 
   function renderPhotoList() {
@@ -4728,13 +4850,13 @@ APP_JS = """(() => {
         await loadDetail(state.selectedId);
         // 상세를 먼저 그리고 나서 채운다. photos.json 은 수천 장짜리라
         // 기다렸다가 그리면 본문이 그만큼 늦게 뜬다.
-        Promise.all([loadVideos(), loadPhotos()]).then(() => {
+        Promise.all([loadVideos(), loadPhotos(), loadUploads()]).then(() => {
           recomputeCounts();
           renderTabs();
         });
       } else {
         renderDocumentTitle();
-        await Promise.all([loadVideos(), loadPhotos()]);
+        await Promise.all([loadVideos(), loadPhotos(), loadUploads()]);
         await loadTopLikes();
         renderMonthOptions();
         refreshView();
