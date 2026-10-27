@@ -879,6 +879,11 @@ INDEX_HTML = """<!doctype html>
       <div class="video-modal-frame" id="videoModalFrame"></div>
       <div class="video-modal-comments" id="videoComments"></div>
       <footer class="video-modal-foot">
+        <button class="video-step" id="videoPrev" type="button">‹ 이전</button>
+        <span class="video-step-count" id="videoStepCount"></span>
+        <button class="video-step" id="videoNext" type="button">다음 ›</button>
+      </footer>
+      <footer class="video-modal-foot">
         <a id="videoModalLink" href="#" target="_blank" rel="noopener noreferrer">새 창에서 열기 ↗</a>
       </footer>
     </div>
@@ -2060,6 +2065,82 @@ select {
 }
 
 /* ---------- 관리자 모드 ---------- */
+/* 목록/그리드 전환. 사진 모아보기의 정렬 버튼과 같은 모양을 쓰되
+   오른쪽에 붙인다. */
+.view-tools {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.view-pick {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 14px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.view-pick.is-active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  font-weight: 650;
+}
+
+/* 영상 그리드. 사진 격자를 그대로 쓰되 칸이 가로로 길다 — 영상은 대부분
+   가로이고, 세로로 길게 자르면 무슨 장면인지 안 보인다. */
+.video-grid .photo-cell {
+  aspect-ratio: 4 / 3;
+}
+
+.video-cell .entry-thumb {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+}
+
+.video-cell figcaption {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 16px);
+}
+
+/* 이전/다음. 영상은 제목만으로 구분되는 경우가 많아 몇 번째인지 같이 보인다.
+   :has() 로 이 줄만 골라낸다 — 아래 "새 창에서 열기" 줄은 그대로 둬야 한다. */
+.video-modal-foot:has(.video-step) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.video-modal-foot .video-step {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 16px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.video-modal-foot .video-step:disabled {
+  opacity: .4;
+  cursor: default;
+}
+
+.video-step-count {
+  color: var(--muted);
+  font-size: 13px;
+}
+
 /* ---------- 업로드 ---------- */
 
 /* 폰에서 올리는 게 기본이라 손가락으로 누를 크기를 먼저 맞춘다. */
@@ -3126,6 +3207,17 @@ APP_JS = """(() => {
   const LIGHTBOX_MAX_ZOOM = 4;
   const LIGHTBOX_ZOOM_STEP = 0.5;
 
+  // 영상은 주소를 가진다. 팝업은 폰의 뒤로가기(화면 가장자리 쓸기)에
+  // 반응하지 않아서, 영상을 보다가 목록으로 돌아올 길이 닫기 버튼뿐이었다.
+  //
+  // `/posts/123/` 과 달리 실제 파일을 만들지 않는다 — 영상 목록은 D1 에 있어
+  // export 시점에 뭐가 있는지 모른다. Pages 가 없는 경로에 index.html 을
+  // 돌려주므로(확인함) 주소를 직접 열어도 동작한다.
+  function videoIdFromPath(pathname) {
+    const match = String(pathname || "").match(/^\/videos\/([A-Za-z0-9_-]+)\/?$/);
+    return match ? match[1] : null;
+  }
+
   function postIdFromPath(pathname) {
     const match = String(pathname || "").match(/^\/posts\/(\d+)\/?$/);
     return match ? Number(match[1]) : null;
@@ -3150,6 +3242,9 @@ APP_JS = """(() => {
     uploadsLoaded: false,
     photoLikes: {},   // photo_id → 누른 횟수
     photoSort: window.localStorage.getItem("kidsnote.photoSort") || "date",
+    // 영상 보기 방식. 목록은 제목이 길어도 읽히고, 그리드는 썸네일이 커서
+    // 무슨 장면인지 고르기 좋다. 폰에서는 그리드가 한 화면에 더 들어온다.
+    videoView: window.localStorage.getItem("kidsnote.videoView") || "list",
     photoLimit: PHOTO_PAGE,
     // 관리자 세션. 글 상세는 실제 페이지 이동이라 sessionStorage 를 쓴다 —
     // 안 그러면 글 하나 열 때마다 비번을 다시 넣어야 한다. 탭을 닫으면
@@ -3234,6 +3329,9 @@ APP_JS = """(() => {
   const videoModalFrame = document.getElementById("videoModalFrame");
   const videoModalLink = document.getElementById("videoModalLink");
   const videoModalClose = document.querySelector(".video-modal-close");
+  const videoPrev = document.getElementById("videoPrev");
+  const videoNext = document.getElementById("videoNext");
+  const videoStepCount = document.getElementById("videoStepCount");
   const appShell = document.getElementById("appShell");
   const profilePhoto = document.getElementById("profilePhoto");
   const babyDays = document.getElementById("babyDays");
@@ -3763,6 +3861,28 @@ APP_JS = """(() => {
     );
   }
 
+  function videoViewToolsHtml() {
+    const pick = (key, label) => (
+      `<button class="view-pick${state.videoView === key ? " is-active" : ""}" type="button"`
+      + ` data-video-view="${key}" aria-pressed="${state.videoView === key}">${label}</button>`
+    );
+    return '<div class="view-tools">' + pick("list", "목록") + pick("grid", "그리드") + "</div>";
+  }
+
+  // 그리드 칸. 사진 격자와 같은 틀을 쓰되 제목이 사진 위에 얹힌다 —
+  // "37주차 0일"처럼 제목이 유일한 구분점이라 안 보이면 고를 수가 없다.
+  function videoCell(video) {
+    const newMarker = isNewVideo(video) ? '<span class="new-pill">NEW</span>' : "";
+    return (
+      `<figure class="photo-cell video-cell" data-video-id="${escapeHtml(video.id)}">`
+      + thumbOf(video)
+      + `<figcaption>${escapeHtml(video.title)}${newMarker}</figcaption>`
+      + `<button class="admin-delete" type="button" data-delete-video="${escapeHtml(video.id)}"`
+      + ' aria-label="영상 삭제">🗑</button>'
+      + "</figure>"
+    );
+  }
+
   function renderVideoList() {
     const videos = filteredVideos();
     const filters = [state.activeMonth, state.query.trim()].filter(Boolean).length;
@@ -3782,7 +3902,10 @@ APP_JS = """(() => {
     }
 
     entryList.innerHTML = uploadBarHtml("video/*", "영상 업로드")
-      + videos.map(videoRow).join("");
+      + videoViewToolsHtml()
+      + (state.videoView === "grid"
+        ? `<div class="photo-grid video-grid">${videos.map(videoCell).join("")}</div>`
+        : videos.map(videoRow).join(""));
     loadVisibleThumbs();
   }
 
@@ -4705,6 +4828,7 @@ APP_JS = """(() => {
     if (!video) return;
     videoModalTitle.textContent = video.title;
     videoModalLink.dataset.videoId = video.id;
+    renderVideoSteps(video.id);
 
     if ((video.source || "link") === "mybox") {
       // MYBOX 에서 가져온 영상. 재생 URL 은 10분짜리 1회용이라 목록에
@@ -4768,6 +4892,62 @@ APP_JS = """(() => {
       wireCommentForm("video", video.id);
       loadComments("video", video.id);
     }
+  }
+
+  // 우리가 주소를 밀어 넣었는지. 링크로 바로 들어온 경우에는 뒤로 갈 곳이
+  // 없어서 history.back() 이 사이트 밖으로 나가 버린다.
+  let pushedVideoRoute = false;
+
+  // 지금 보고 있는 목록 안에서 움직인다. state.videos 전체가 아니라
+  // filteredVideos() 를 쓰는 이유: 자녀를 바꾸거나 검색한 상태에서 "다음"을
+  // 눌렀는데 화면에 없던 영상이 나오면 어디서 온 건지 알 수 없다.
+  function videoNeighbours(id) {
+    const list = filteredVideos();
+    const index = list.findIndex((video) => video.id === id);
+    return { list, index };
+  }
+
+  function renderVideoSteps(id) {
+    const { list, index } = videoNeighbours(id);
+    const many = list.length > 1 && index >= 0;
+    videoPrev.hidden = !many;
+    videoNext.hidden = !many;
+    videoStepCount.textContent = many ? `${index + 1} / ${list.length}` : "";
+    if (!many) return;
+    videoPrev.disabled = index <= 0;
+    videoNext.disabled = index >= list.length - 1;
+  }
+
+  function stepVideo(delta) {
+    const current = videoModalLink.dataset.videoId;
+    const { list, index } = videoNeighbours(current);
+    const next = list[index + delta];
+    if (!next) return;
+    // 주소도 같이 바꾼다. 뒤로가기가 영상 하나씩 되짚는 대신 목록으로
+    // 바로 돌아가도록 replace 를 쓴다 — 20개를 넘겼다고 뒤로가기를 20번
+    // 눌러야 하면 폰에서 쓸 수 없다.
+    if (pushedVideoRoute) {
+      window.history.replaceState({ video: next.id }, "", `/videos/${encodeURIComponent(next.id)}/`);
+    }
+    openVideoModal(next.id);
+  }
+
+  function goToVideo(id) {
+    if (!id) return;
+    window.history.pushState({ video: id }, "", `/videos/${encodeURIComponent(id)}/`);
+    pushedVideoRoute = true;
+    openVideoModal(id);
+  }
+
+  function leaveVideo() {
+    if (videoModal.hidden) return;
+    if (pushedVideoRoute) {
+      // popstate 가 받아서 닫는다. 여기서 바로 닫으면 주소만 남는다.
+      window.history.back();
+      return;
+    }
+    window.history.replaceState({}, "", "/");
+    closeVideoModal();
   }
 
   function closeVideoModal() {
@@ -5298,6 +5478,10 @@ APP_JS = """(() => {
       } else {
         renderDocumentTitle();
         await Promise.all([loadVideos(), loadPhotos(), loadUploads()]);
+        // 주소를 직접 열었거나 공유받은 링크로 들어온 경우. 목록을 먼저
+        // 채워야 "3 / 18" 과 이전·다음이 맞는다.
+        const deepVideo = videoIdFromPath(window.location.pathname);
+        if (deepVideo) openVideoModal(deepVideo);
         await loadTopLikes();
         renderMonthOptions();
         refreshView();
@@ -5329,6 +5513,15 @@ APP_JS = """(() => {
     if (del) {
       event.preventDefault();
       deleteVideo(del.dataset.deleteVideo);
+      return;
+    }
+
+    const view = event.target.closest("button[data-video-view]");
+    if (view) {
+      event.preventDefault();
+      state.videoView = view.dataset.videoView;
+      window.localStorage.setItem("kidsnote.videoView", state.videoView);
+      renderVideoList();
       return;
     }
 
@@ -5386,9 +5579,11 @@ APP_JS = """(() => {
       return;
     }
 
-    const card = event.target.closest("button[data-video-id]");
+    // 목록은 <button>, 그리드는 <figure> 다. 태그를 묶어 두면 보기를 추가할
+    // 때마다 여기도 같이 고쳐야 한다.
+    const card = event.target.closest("[data-video-id]");
     if (!card) return;
-    openVideoModal(card.dataset.videoId);
+    goToVideo(card.dataset.videoId);
   });
 
   adminHotspots.forEach((spot) => spot.addEventListener("click", openAdminModal));
@@ -5435,9 +5630,30 @@ APP_JS = """(() => {
     deleteComment(del.dataset.deleteComment, () => loadComments("video", videoId));
   });
 
-  videoModalClose.addEventListener("click", closeVideoModal);
+  videoModalClose.addEventListener("click", leaveVideo);
+  videoPrev.addEventListener("click", () => stepVideo(-1));
+  videoNext.addEventListener("click", () => stepVideo(1));
+
+  // 사진과 같은 손짓으로 넘긴다. <video> 위에서도 먹어야 해서 모달 전체에 건다.
+  let videoSwipe = null;
+  videoModal.addEventListener("touchstart", (event) => {
+    videoSwipe = event.touches.length === 1
+      ? { x: event.touches[0].clientX, y: event.touches[0].clientY, at: Date.now() }
+      : null;
+  }, { passive: true });
+  videoModal.addEventListener("touchend", (event) => {
+    const start = videoSwipe;
+    videoSwipe = null;
+    const touch = start && event.changedTouches && event.changedTouches[0];
+    if (!touch) return;
+    const dx = touch.clientX - start.x;
+    const dy = touch.clientY - start.y;
+    if (Math.abs(dx) < SWIPE_MIN_PX || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    if (Date.now() - start.at > SWIPE_MAX_MS) return;
+    stepVideo(dx < 0 ? 1 : -1);
+  }, { passive: true });
   videoModal.addEventListener("click", (event) => {
-    if (event.target === videoModal) closeVideoModal();
+    if (event.target === videoModal) leaveVideo();
   });
 
   listToggle.addEventListener("click", toggleList);
@@ -5555,7 +5771,7 @@ APP_JS = """(() => {
       return;
     }
     if (event.key === "Escape" && !videoModal.hidden) {
-      closeVideoModal();
+      leaveVideo();
       return;
     }
     if (event.key === "Escape") closeLightbox();
@@ -5587,6 +5803,16 @@ APP_JS = """(() => {
     renderTabs();
     refreshView();
   }
+
+  window.addEventListener("popstate", () => {
+    const id = videoIdFromPath(window.location.pathname);
+    if (id) {
+      openVideoModal(id);
+      return;
+    }
+    pushedVideoRoute = false;
+    closeVideoModal();
+  });
 
   uploadInput.addEventListener("change", () => {
     const files = Array.from(uploadInput.files || []);

@@ -26,6 +26,17 @@ import {
 const MAX_TITLE = 200;
 const MAX_SUMMARY = 500;
 
+/**
+ * 정렬은 **등록 시각이 1순위**다.
+ *
+ * 예전에는 video_date 가 1순위였는데, 폰에서 올린 영상은 날짜도 seq 도 비어
+ * 있어서 초음파(seq 3700 등) 아래로 전부 밀렸다 — 방금 올린 게 목록 맨
+ * 끝에 있었다.
+ *
+ * 폴더 동기화는 한 묶음에 같은 created_at 을 쓰므로(sync.js 가 now 를 한 번만
+ * 잡는다), 이렇게 해도 초음파는 주차 순서를 그대로 유지한 채 함께 움직인다.
+ * 새로 동기화한 영상이 위로 오는 것도 "새로 들어온 것"이라 맞다.
+ */
 export async function onRequestGet({ request, env }) {
   const url = new URL(request.url);
   const childParam = url.searchParams.get("child");
@@ -38,14 +49,14 @@ export async function onRequestGet({ request, env }) {
       .prepare(
         `SELECT id, child, source, url, title, video_date, seq, summary, created_at
            FROM videos WHERE child = ?
-          ORDER BY video_date DESC, seq DESC, created_at DESC`,
+          ORDER BY created_at DESC, seq DESC, video_date DESC`,
       )
       .bind(child);
   } else {
     statement = env.DB.prepare(
       `SELECT id, child, source, url, title, video_date, seq, summary, created_at
          FROM videos
-        ORDER BY video_date DESC, seq DESC, created_at DESC`,
+        ORDER BY created_at DESC, seq DESC, video_date DESC`,
     );
   }
 
