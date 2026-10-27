@@ -810,6 +810,12 @@ INDEX_HTML = """<!doctype html>
     </figure>
     <button class="lightbox-nav lightbox-next" type="button" aria-label="다음 사진">&#8250;</button>
   </div>
+  <input class="upload-input" id="uploadInput" type="file" multiple hidden>
+  <div class="upload-sheet" id="uploadSheet" hidden>
+    <p class="upload-title" id="uploadTitle"></p>
+    <div class="upload-track"><span class="upload-fill" id="uploadFill"></span></div>
+    <p class="upload-note" id="uploadNote"></p>
+  </div>
   <div class="admin-banner" id="adminBanner" hidden>관리자 모드</div>
   <button class="admin-hotspot admin-hotspot-mobile" id="adminHotspotMobile"
           type="button" tabindex="-1" aria-hidden="true"></button>
@@ -2054,6 +2060,95 @@ select {
 }
 
 /* ---------- 관리자 모드 ---------- */
+/* ---------- 업로드 ---------- */
+
+/* 폰에서 올리는 게 기본이라 손가락으로 누를 크기를 먼저 맞춘다. */
+.upload-bar {
+  display: flex;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.upload-pick {
+  flex: 1;
+  min-height: 46px;
+  border: 1px dashed var(--accent);
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.upload-pick:disabled {
+  opacity: .55;
+  cursor: default;
+}
+
+/* 진행 상황은 화면 아래에 고정한다. 목록 위쪽에 두면 사진을 고르고 스크롤한
+   뒤에는 보이지 않아서, 올라가는 중인지 멈춘 건지 알 수 없다. */
+.upload-sheet {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  width: min(420px, calc(100% - 24px));
+  z-index: 60;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(25, 32, 28, .22);
+  padding: 12px 14px;
+}
+
+.upload-title {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.upload-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  overflow: hidden;
+}
+
+.upload-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width .2s ease;
+}
+
+.upload-note {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.upload-note.is-error {
+  color: var(--danger);
+}
+
+/* 보관본이 아직 없는 사진. 사진은 보이지만 원본이 MYBOX 에 없다. */
+.photo-cell.is-partial::after {
+  content: "원본 없음";
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgba(16, 18, 17, .66);
+  color: #fff;
+  font-size: 11px;
+}
+
 /* 삭제 버튼은 관리자 세션일 때만 나타난다. 가족이 보는 평소 화면에는
    아예 없다. 막는 것은 서버의 비번이고, 이 클래스는 보이고 안 보이고만
    정한다. */
@@ -3072,6 +3167,11 @@ APP_JS = """(() => {
   const lightboxImageWrap = document.getElementById("lightboxImageWrap");
   const lightboxImage = document.getElementById("lightboxImage");
   const lightboxLike = document.getElementById("lightboxLike");
+  const uploadInput = document.getElementById("uploadInput");
+  const uploadSheet = document.getElementById("uploadSheet");
+  const uploadTitle = document.getElementById("uploadTitle");
+  const uploadFill = document.getElementById("uploadFill");
+  const uploadNote = document.getElementById("uploadNote");
   const lightboxCaption = document.getElementById("lightboxCaption");
   const lightboxZoomValue = document.getElementById("lightboxZoomValue");
   const lightboxZoomOut = document.querySelector(".lightbox-zoom-out");
@@ -3652,15 +3752,16 @@ APP_JS = """(() => {
     if (!videos.length) {
       // 지금 자녀 기준으로 판단해야 한다. 전체 영상 수로 보면 살구처럼
       // 영상이 하나도 없는 자녀에게 "필터 결과 없음"이라고 말하게 된다.
-      entryList.innerHTML = childVideos().length
+      entryList.innerHTML = uploadBarHtml("video/*", "영상 올리기") + (childVideos().length
         ? '<div class="empty">조건에 맞는 영상이 없습니다.</div>'
         : state.videosLoaded
           ? `<div class="empty">${escapeHtml(activeChild().name)} 영상이 아직 없습니다.</div>`
-          : '<div class="error">영상 목록을 불러오지 못했습니다.</div>';
+          : '<div class="error">영상 목록을 불러오지 못했습니다.</div>');
       return;
     }
 
-    entryList.innerHTML = videos.map(videoRow).join("");
+    entryList.innerHTML = uploadBarHtml("video/*", "영상 올리기")
+      + videos.map(videoRow).join("");
     loadVisibleThumbs();
   }
 
@@ -4728,26 +4829,299 @@ APP_JS = """(() => {
     return list;
   }
 
+  // ---- 업로드 ----
+  //
+  // 파일 바이트는 브라우저가 MYBOX 로 직접 보낸다. 서버는 올릴 자리(1회용
+  // URL)를 내주고, 끝난 뒤 결과를 받아 적기만 한다.
+  //
+  // 주로 폰에서 쓴다는 전제로 짰다. 그래서:
+  //  - 한 번에 한 개씩 보낸다. 끊겨도 잃는 건 전송 중인 하나뿐이다.
+  //  - 사진은 **웹용 사본을 전부 먼저** 올리고 원본을 나중에 올린다. 사본은
+  //    600KB 수준이라 금방 끝나서, 중간에 앱을 바꿔도 사진은 이미 다 보인다.
+  //    끊기면 "보관본만 없는" 상태로 남고 그건 나중에 채울 수 있다.
+  //  - MYBOX 는 이어올리기를 지원하지 않는다(Content-Range 400, 업로드 URL
+  //    재사용 400). 끊긴 파일은 처음부터 다시 올려야 한다.
+  const UPLOAD_MAX_EDGE = 2048;
+  const UPLOAD_QUALITY = 0.85;
+
+  let uploadBusy = false;
+  let wakeLock = null;
+
+  async function keepScreenAwake(on) {
+    try {
+      if (on && "wakeLock" in navigator) {
+        wakeLock = await navigator.wakeLock.request("screen");
+      } else if (!on && wakeLock) {
+        await wakeLock.release();
+        wakeLock = null;
+      }
+    } catch {
+      // 지원하지 않거나 거부당하면 그냥 둔다. 있으면 좋은 것이지 필수가 아니다.
+    }
+  }
+
+  function showUploadSheet(title, ratio, note, isError) {
+    uploadSheet.hidden = false;
+    uploadTitle.textContent = title;
+    uploadFill.style.width = `${Math.round(Math.max(0, Math.min(1, ratio)) * 100)}%`;
+    uploadNote.textContent = note || "";
+    uploadNote.classList.toggle("is-error", Boolean(isError));
+  }
+
+  /**
+   * 긴 변 2048px JPEG 사본. 화면에 띄울 용도다.
+   *
+   * 여기서 EXIF 회전이 정리되고 GPS 좌표도 같이 떨어진다 — 다시 인코딩하면
+   * 메타데이터가 남지 않는다. 이 저장소가 노션 업로드에서 이미 GPS 를 지우고
+   * 있어서 같은 기조다.
+   *
+   * <img> 로 디코딩하는 이유: 요즘 브라우저는 캔버스에 그릴 때도 EXIF 방향을
+   * 적용한다. 아이폰 HEIC 도 사파리는 이걸로 읽는다. 못 읽으면 null 을 주고,
+   * 부르는 쪽이 원본만 올린다.
+   */
+  async function makeWebCopy(file) {
+    const url = URL.createObjectURL(file);
+    try {
+      const image = await new Promise((resolve, reject) => {
+        const el = new Image();
+        el.onload = () => resolve(el);
+        el.onerror = () => reject(new Error("decode"));
+        el.src = url;
+      });
+      const long = Math.max(image.naturalWidth, image.naturalHeight);
+      if (!long) return null;
+      const scale = Math.min(1, UPLOAD_MAX_EDGE / long);
+      const width = Math.round(image.naturalWidth * scale);
+      const height = Math.round(image.naturalHeight * scale);
+
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      canvas.getContext("2d").drawImage(image, 0, 0, width, height);
+
+      const blob = await new Promise((done) => canvas.toBlob(done, "image/jpeg", UPLOAD_QUALITY));
+      return blob ? { blob, width, height } : null;
+    } catch {
+      return null;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  /**
+   * MYBOX 로 한 개 보낸다.
+   *
+   * fetch 가 아니라 XHR 인 이유는 진행률 하나뿐이다. fetch 에는 업로드
+   * 진행을 알 방법이 없고, 폰에서 20초씩 걸리는 전송은 멈춘 것처럼 보인다.
+   */
+  function sendToMybox(uploadUrl, blob, fileName, onProgress) {
+    return new Promise((resolve, reject) => {
+      const form = new FormData();
+      form.append("Filedata", blob, fileName);
+
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", uploadUrl);
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) onProgress(event.loaded / event.total);
+      };
+      xhr.onload = () => {
+        if (xhr.status < 200 || xhr.status >= 300) {
+          reject(new Error(`업로드 실패 (${xhr.status})`));
+          return;
+        }
+        try {
+          resolve(JSON.parse(xhr.responseText || "{}"));
+        } catch {
+          reject(new Error("업로드 응답을 읽지 못했습니다"));
+        }
+      };
+      xhr.onerror = () => reject(new Error("연결이 끊겼습니다"));
+      xhr.onabort = () => reject(new Error("업로드가 중단됐습니다"));
+      xhr.send(form);
+    });
+  }
+
+  /** 자리를 받아 한 개를 끝까지 올린다. 실패하면 던진다. */
+  async function uploadOne(blob, fileName, isWeb, onProgress) {
+    const issued = await adminRequest("/api/uploads/url", "POST", {
+      file_name: fileName,
+      file_size: blob.size,
+      web: Boolean(isWeb),
+    });
+    if (!issued?.upload_url) throw new Error("업로드할 자리를 받지 못했습니다");
+    return sendToMybox(issued.upload_url, blob, fileName, onProgress);
+  }
+
+  // 같은 이름이 겹치지 않게 앞에 시각을 붙인다. MYBOX 에는 이름 변경이 없어서
+  // 나중에 고칠 수 없다 — 올릴 때 제대로 지어야 한다.
+  function uploadName(file, suffix) {
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`
+      + `-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    const safe = String(file.name || "photo").replace(/[\\/:*?"<>|]/g, "_");
+    return suffix ? `${stamp}-${suffix}-${safe}` : `${stamp}-${safe}`;
+  }
+
+  /**
+   * 고른 파일들을 올린다.
+   *
+   * 사진은 2단계다 — 사본 전부 → 원본 전부. 한 장씩 "사본+원본"을 끝내고
+   * 다음으로 가면, 10장 중 3장째에 끊겼을 때 7장이 아예 안 보인다. 사본을
+   * 먼저 다 올리면 30초 만에 열 장이 전부 사이트에 뜨고, 그 뒤에 끊겨도
+   * 보관본만 비어 있다.
+   */
+  async function runUpload(files) {
+    if (uploadBusy || !files.length) return;
+    uploadBusy = true;
+    await keepScreenAwake(true);
+
+    const photos = files.filter((f) => (f.type || "").startsWith("image/"));
+    const videos = files.filter((f) => (f.type || "").startsWith("video/"));
+    const skipped = files.length - photos.length - videos.length;
+    const child = state.activeChild;
+    const failures = [];
+
+    // ---- 1단계: 사진 사본 ----
+    const recorded = [];
+    for (let i = 0; i < photos.length; i += 1) {
+      const file = photos[i];
+      showUploadSheet(`사진 ${i + 1}/${photos.length} 올리는 중`, 0, file.name);
+      try {
+        const copy = await makeWebCopy(file);
+        if (!copy) throw new Error("이 사진은 브라우저가 열지 못했습니다");
+        const name = uploadName(file, "web").replace(/\.[^.]+$/, "") + ".jpg";
+        const up = await uploadOne(copy.blob, name, true, (r) => {
+          showUploadSheet(`사진 ${i + 1}/${photos.length} 올리는 중`, r, file.name);
+        });
+        const saved = await adminRequest("/api/uploads", "POST", {
+          child,
+          web_id: up.resourceId,
+          file_name: file.name,
+          width: copy.width,
+          height: copy.height,
+          size: file.size,
+        });
+        if (!saved?.id) throw new Error("기록하지 못했습니다");
+        recorded.push({ file, id: saved.id, webId: up.resourceId });
+      } catch (err) {
+        failures.push(`${file.name}: ${err.message}`);
+      }
+    }
+
+    // 사본이 올라간 시점에 이미 볼 수 있다. 원본을 기다리게 하지 않는다.
+    if (recorded.length) {
+      await loadUploads();
+      recomputeCounts();
+      renderTabs();
+      refreshView();
+    }
+
+    // ---- 2단계: 사진 원본 ----
+    for (let i = 0; i < recorded.length; i += 1) {
+      const { file, id, webId } = recorded[i];
+      showUploadSheet(`원본 보관 ${i + 1}/${recorded.length}`, 0, file.name);
+      try {
+        const up = await uploadOne(file, uploadName(file), false, (r) => {
+          showUploadSheet(`원본 보관 ${i + 1}/${recorded.length}`, r, file.name);
+        });
+        await adminRequest("/api/uploads", "POST", {
+          child, web_id: webId, file_id: up.resourceId, file_name: file.name,
+        });
+      } catch (err) {
+        // 사진은 이미 보인다. 보관본만 없는 상태로 남겨 둔다.
+        failures.push(`${file.name} 원본: ${err.message}`);
+      }
+    }
+
+    // ---- 3단계: 영상 ----
+    for (let i = 0; i < videos.length; i += 1) {
+      const file = videos[i];
+      showUploadSheet(`영상 ${i + 1}/${videos.length} 올리는 중`, 0, file.name);
+      try {
+        const up = await uploadOne(file, uploadName(file), false, (r) => {
+          showUploadSheet(`영상 ${i + 1}/${videos.length} 올리는 중`, r, file.name);
+        });
+        await adminRequest("/api/uploads/video", "POST", {
+          child, file_id: up.resourceId, file_name: file.name,
+        });
+      } catch (err) {
+        failures.push(`${file.name}: ${err.message}`);
+      }
+    }
+
+    await Promise.all([loadUploads(), loadVideos()]);
+    recomputeCounts();
+    renderTabs();
+    refreshView();
+
+    const done = recorded.length + videos.length - failures.filter((f) => !f.includes("원본")).length;
+    const notes = [];
+    if (skipped) notes.push(`${skipped}개는 사진·영상이 아니라 건너뛰었습니다`);
+    if (failures.length) notes.push(failures.slice(0, 3).join(" / "));
+    showUploadSheet(
+      failures.length ? `${done}개 완료, ${failures.length}개 실패` : `${done}개 올렸습니다`,
+      1,
+      notes.join(" · "),
+      failures.length > 0,
+    );
+
+    uploadBusy = false;
+    await keepScreenAwake(false);
+    // 실패가 있으면 읽을 시간을 더 준다.
+    window.setTimeout(() => { uploadSheet.hidden = true; }, failures.length ? 9000 : 2600);
+  }
+
+  function uploadBarHtml(accept, label) {
+    if (!isAdmin()) return "";
+    return '<div class="upload-bar">'
+      + `<button class="upload-pick" type="button" data-upload-accept="${escapeHtml(accept)}"`
+      + `${uploadBusy ? " disabled" : ""}>${escapeHtml(label)}</button>`
+      + "</div>";
+  }
+
   function renderUploadList() {
     const items = childUploads();
     listTitle.textContent = "올린 사진";
     listCount.textContent = `${items.length}장`;
     renderListCollapseState();
 
+    const bar = uploadBarHtml("image/*,video/*", "사진·영상 올리기");
+
     if (!items.length) {
       // 아직 아무도 안 올린 것과, API 가 죽어서 못 받은 것은 다른 상황이다.
-      entryList.innerHTML = state.uploadsLoaded
+      const empty = state.uploadsLoaded
         ? `<div class="empty">${escapeHtml(activeChild().name)} 사진을 아직 올리지 않았습니다.</div>`
         : '<div class="empty">올린 사진이 아직 없습니다.</div>';
+      entryList.innerHTML = bar + empty;
       return;
     }
 
-    entryList.innerHTML = `<div class="photo-grid">${items.map((item, index) => (
-      `<figure class="photo-cell" data-upload-index="${index}">`
+    const missing = items.filter((item) => item.original_missing).length;
+    const warn = missing
+      ? `<p class="upload-note is-error">원본 ${missing}개가 MYBOX 에 보관되지 않았습니다. 다시 올리면 채워집니다.</p>`
+      : "";
+
+    entryList.innerHTML = bar + warn + `<div class="photo-grid">${items.map((item, index) => (
+      `<figure class="photo-cell${item.original_missing ? " is-partial" : ""}" data-upload-index="${index}">`
       + `<img src="${escapeHtml(item.src)}" alt="${escapeHtml(item.caption || "")}" loading="lazy">`
-      + `<figcaption>${escapeHtml(item.caption || item.date || "")}</figcaption>`
+      + `<figcaption>${escapeHtml(item.caption || uploadDate(item))}</figcaption>`
+      + `<button class="admin-delete" type="button" data-delete-upload="${escapeHtml(item.id)}"`
+      + ' aria-label="사진 내리기">🗑</button>'
       + "</figure>"
     )).join("")}</div>`;
+
+    // 라이트박스도 같은 순서로 따라간다.
+    state.lightboxItems = items.map((item) => ({
+      src: item.src,
+      alt: item.caption || "",
+      caption: item.caption || uploadDate(item),
+    }));
+  }
+
+  function uploadDate(item) {
+    if (!item.created_at) return "";
+    return koreaDateKey(new Date(item.created_at));
   }
 
   function renderPhotoList() {
@@ -4888,6 +5262,31 @@ APP_JS = """(() => {
     if (del) {
       event.preventDefault();
       deleteVideo(del.dataset.deleteVideo);
+      return;
+    }
+
+    const pick = event.target.closest("button[data-upload-accept]");
+    if (pick) {
+      event.preventDefault();
+      // accept 를 눌릴 때 정한다. 영상 탭에서는 영상만, 사진 탭에서는 둘 다
+      // 고를 수 있어야 해서 입력칸 하나를 돌려 쓴다.
+      uploadInput.accept = pick.dataset.uploadAccept;
+      uploadInput.value = "";
+      uploadInput.click();
+      return;
+    }
+
+    const drop = event.target.closest("[data-delete-upload]");
+    if (drop) {
+      event.preventDefault();
+      removeUpload(drop.dataset.deleteUpload);
+      return;
+    }
+
+    const uploadCell = event.target.closest("figure[data-upload-index]");
+    if (uploadCell) {
+      event.preventDefault();
+      showLightbox(Number(uploadCell.dataset.uploadIndex), state.lightboxItems);
       return;
     }
 
@@ -5100,6 +5499,33 @@ APP_JS = """(() => {
       event.preventDefault();
       resetLightboxZoom();
     }
+  });
+
+  async function removeUpload(id) {
+    if (!isAdmin() || !id) return;
+    // MYBOX 에는 삭제 API 가 없다. 여기서 지우는 건 목록에서 내리는 것뿐이고
+    // 원본은 드라이브에 남는다 — 그 사실을 묻는 말에 그대로 적는다.
+    if (!window.confirm("사이트에서 내릴까요? MYBOX 원본은 지워지지 않습니다.")) return;
+    const done = await adminRequest(`/api/uploads/${encodeURIComponent(id)}`, "DELETE", {});
+    if (!done) return;
+    await loadUploads();
+    recomputeCounts();
+    renderTabs();
+    refreshView();
+  }
+
+  uploadInput.addEventListener("change", () => {
+    const files = Array.from(uploadInput.files || []);
+    uploadInput.value = "";
+    if (files.length) runUpload(files);
+  });
+
+  // 올리는 중에 탭을 닫으려 하면 되묻는다. MYBOX 는 이어올리기가 없어서
+  // 전송 중인 파일은 처음부터 다시 올려야 한다.
+  window.addEventListener("beforeunload", (event) => {
+    if (!uploadBusy) return;
+    event.preventDefault();
+    event.returnValue = "";
   });
 
   loadApp();

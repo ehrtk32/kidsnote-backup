@@ -91,3 +91,33 @@ CREATE TABLE IF NOT EXISTS settings (
   value      TEXT NOT NULL,
   updated_at INTEGER NOT NULL
 );
+
+-- 직접 올린 사진.
+--
+-- 영상은 여기 오지 않는다 — videos 표에 source='mybox' 로 들어가서 재생·
+-- 썸네일·삭제 배선을 그대로 쓴다. 사진만 따로 두는 이유는 보여 주는 방식이
+-- 전혀 다르기 때문이다(격자, 라이트박스, 좋아요).
+--
+-- MYBOX 에는 **두 벌**이 올라간다. 원본은 보관용이고, 웹용 사본(긴 변
+-- 2048px JPEG)이 화면에 뜬다. 원본만 두면 아이폰 HEIC 가 안드로이드에서
+-- 안 보이고, 사본만 두면 원본이 사라진다.
+CREATE TABLE IF NOT EXISTS uploads (
+  id             TEXT PRIMARY KEY,          -- sha256 앞 12자리
+  child          TEXT NOT NULL,
+  -- 원본. **빈 값일 수 있다** — 웹용 사본을 먼저 올리고 원본을 나중에
+  -- 올리는데, 그 사이에 폰에서 앱을 바꾸면 원본만 못 올린 채로 남는다.
+  -- 사진은 이미 보이고 보관본만 비어 있는 상태이며, 나중에 채울 수 있다.
+  mybox_file_id  TEXT NOT NULL DEFAULT '',
+  mybox_web_id   TEXT NOT NULL DEFAULT '',  -- 화면에 띄우는 사본
+  file_name      TEXT NOT NULL DEFAULT '',
+  caption        TEXT NOT NULL DEFAULT '',
+  width          INTEGER NOT NULL DEFAULT 0,
+  height         INTEGER NOT NULL DEFAULT 0,
+  size           INTEGER NOT NULL DEFAULT 0,
+  -- 찍은 날(있으면). 올린 날과 다르다 — 몇 년 전 사진을 오늘 올릴 수 있다.
+  taken_at       TEXT NOT NULL DEFAULT '',
+  created_at     INTEGER NOT NULL           -- 올린 시각 epoch ms
+);
+
+CREATE INDEX IF NOT EXISTS uploads_child_created
+  ON uploads (child, created_at DESC);

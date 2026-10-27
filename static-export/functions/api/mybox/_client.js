@@ -42,6 +42,38 @@ export async function myboxGet(env, path) {
   return { ok: true, data };
 }
 
+/** myboxGet 과 같되 본문을 실어 보낸다. 폴더 생성·업로드 URL 발급에 쓴다. */
+export async function myboxPost(env, path, body) {
+  let response;
+  try {
+    response = await fetch(`${BASE}${path}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.MYBOX_TOKEN}`,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body ?? {}),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+  } catch (err) {
+    return { ok: false, status: 0, detail: String(err) };
+  }
+
+  const text = await response.text();
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    // JSON 이 아니면 그대로 들고 간다.
+  }
+
+  if (!response.ok) {
+    return { ok: false, status: response.status, data, detail: text.slice(0, 300) };
+  }
+  return { ok: true, data };
+}
+
 /** myboxGet 의 실패를 그대로 돌려줄 Response 로 바꾼다. */
 export function myboxError(result) {
   const hint =
