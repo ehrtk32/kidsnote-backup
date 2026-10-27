@@ -243,6 +243,17 @@ npx wrangler d1 execute papa_pjh --remote --command \
   "DELETE FROM settings WHERE key='admin_passcode'"
 ```
 
+**사진 상세(라이트박스)는 화면을 통째로 쓴다.** 예전에는 좌우 64px·위 54px 을
+버튼 자리로 비워 두는 그리드였는데, 세로 사진이 특히 작게 보여서 2026-10-27 에
+걷어냈다. 이제 버튼은 자리를 차지하지 않고 `position: absolute` 로 사진 위에 뜨고,
+평소 `opacity: .5` 였다가 hover/focus 에서 또렷해진다. 두 가지 주의:
+
+- `.like-button` 은 기본이 `position: absolute`(모아보기 타일 모서리에 붙는 용도)라,
+  캡션 옆에 줄 세우려면 `.lightbox-like .like-button { position: static }` 이 필요하다.
+- 바깥을 눌러 닫는 조건이 `event.target === lightbox` 였는데, 사진 틀이 화면을 다
+  덮으면서 그 조건에 걸리는 일이 없어졌다. 지금은 `lightboxImageWrap` 을 눌렀고
+  확대 중이 아닐 때로 본다 — 확대 중에 닫으면 끌다가 손을 뗄 때 창이 사라진다.
+
 **사이트 입구에 인증이 없다.** 6자리 가족 패스코드 게이트가 있었는데 2026-10-22 에
 없앴다(장식이었고 사용자가 지워 달라고 했다). URL 을 아는 사람은 누구나 본다 —
 의도된 것이다. 댓글·좋아요 쓰기도 열려 있다. 되살리자고 제안하지 말 것.

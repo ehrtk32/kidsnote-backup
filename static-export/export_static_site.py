@@ -803,7 +803,10 @@ INDEX_HTML = """<!doctype html>
       <div class="lightbox-image-wrap" id="lightboxImageWrap">
         <img id="lightboxImage" alt="" draggable="false">
       </div>
-      <figcaption id="lightboxCaption"></figcaption>
+      <figcaption class="lightbox-caption-bar">
+        <span class="lightbox-like" id="lightboxLike" hidden></span>
+        <span id="lightboxCaption"></span>
+      </figcaption>
     </figure>
     <button class="lightbox-nav lightbox-next" type="button" aria-label="다음 사진">&#8250;</button>
   </div>
@@ -2479,36 +2482,26 @@ body.modal-open {
   }
 }
 
+/* 사진이 화면을 통째로 쓴다. 예전에는 좌우 64px, 위 54px 을 버튼 자리로
+   비워 두고 그 가운데에만 사진을 넣었는데, 세로 사진에서 특히 작게 보였다.
+   이제 버튼은 자리를 차지하지 않고 사진 위에 뜬다. */
 .lightbox {
   position: fixed;
   inset: 0;
   z-index: 50;
-  background: rgba(10, 12, 11, .88);
-  display: grid;
-  grid-template-columns: 64px minmax(0, 1fr) 64px;
-  grid-template-rows: 54px minmax(0, 1fr);
-  align-items: center;
-  gap: 8px;
-  padding: 12px;
+  background: rgba(10, 12, 11, .92);
 }
 
 .lightbox-frame {
-  grid-column: 2;
-  grid-row: 2;
+  position: absolute;
+  inset: 0;
   margin: 0;
-  min-width: 0;
-  min-height: 0;
-  height: 100%;
-  display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
-  justify-items: center;
-  gap: 10px;
+  display: block;
 }
 
 .lightbox-image-wrap {
-  width: 100%;
-  min-width: 0;
-  min-height: 0;
+  position: absolute;
+  inset: 0;
   overflow: auto;
   overscroll-behavior: contain;
   display: flex;
@@ -2544,18 +2537,67 @@ body.modal-open {
   cursor: grabbing;
 }
 
-.lightbox-frame figcaption {
+/* 캡션과 좋아요가 사진 아래 가장자리에 함께 뜬다. 밝은 사진 위에서도
+   글자가 읽혀야 하므로 반투명 판을 깔았다. */
+.lightbox-caption-bar {
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  max-width: calc(100% - 32px);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px 6px 14px;
+  border-radius: 999px;
+  background: rgba(10, 12, 11, .55);
+  backdrop-filter: blur(6px);
   color: #fff;
   font-size: 14px;
-  min-height: 22px;
   text-align: center;
+}
+
+/* 모아보기 타일에서는 하트가 사진 모서리에 절대위치로 붙지만, 여기서는
+   캡션 옆에 줄 세워야 한다. */
+.lightbox-like .like-button {
+  position: static;
+  background: rgba(255, 255, 255, .16);
+}
+
+.lightbox-like .like-button:hover {
+  background: rgba(255, 255, 255, .28);
 }
 
 .lightbox button {
   border: 0;
   color: #fff;
-  background: rgba(255, 255, 255, .12);
+  /* 밝은 사진 위에 떠 있으므로 밝은 반투명으로는 안 보인다. 어둡게 깔고
+     뒤를 흐린다. */
+  background: rgba(10, 12, 11, .55);
+  backdrop-filter: blur(6px);
   border-radius: 8px;
+}
+
+/* 버튼 묶음은 사진 위에 뜨고, 평소에는 흐릿하다가 가까이 가면 또렷해진다.
+   터치에는 hover 가 없으므로 기본값도 누를 수 있을 만큼은 보여야 한다. */
+.lightbox-top-actions,
+.lightbox-toolbar,
+.lightbox-nav,
+.lightbox-caption-bar {
+  position: absolute;
+  z-index: 2;
+  opacity: .5;
+  transition: opacity .15s ease;
+}
+
+.lightbox-top-actions:hover,
+.lightbox-toolbar:hover,
+.lightbox-nav:hover,
+.lightbox-caption-bar:hover,
+.lightbox-top-actions:focus-within,
+.lightbox-toolbar:focus-within,
+.lightbox-caption-bar:focus-within,
+.lightbox-nav:focus-visible {
+  opacity: 1;
 }
 
 .lightbox button:disabled {
@@ -2564,9 +2606,8 @@ body.modal-open {
 }
 
 .lightbox-top-actions {
-  grid-column: 3;
-  grid-row: 1;
-  justify-self: end;
+  top: 12px;
+  right: 12px;
   display: flex;
   gap: 6px;
 }
@@ -2592,15 +2633,14 @@ body.modal-open {
 }
 
 .lightbox-toolbar {
-  grid-column: 2;
-  grid-row: 1;
-  justify-self: center;
-  align-self: center;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
   display: flex;
   gap: 6px;
   padding: 4px;
   border-radius: 8px;
-  background: rgba(255, 255, 255, .08);
+  background: rgba(10, 12, 11, .45);
 }
 
 .lightbox-toolbar button {
@@ -2617,18 +2657,19 @@ body.modal-open {
 }
 
 .lightbox-nav {
-  grid-row: 2;
+  top: 50%;
+  transform: translateY(-50%);
   width: 48px;
   height: 64px;
   font-size: 38px;
 }
 
 .lightbox-prev {
-  grid-column: 1;
+  left: 12px;
 }
 
 .lightbox-next {
-  grid-column: 3;
+  right: 12px;
 }
 
 @media (max-width: 860px) {
@@ -2756,9 +2797,23 @@ body.modal-open {
     justify-items: start;
   }
 
-  .lightbox {
-    grid-template-columns: 44px minmax(0, 1fr) 44px;
-    padding: 8px;
+  .lightbox-nav {
+    width: 40px;
+    height: 56px;
+    font-size: 32px;
+  }
+
+  .lightbox-prev {
+    left: 6px;
+  }
+
+  .lightbox-next {
+    right: 6px;
+  }
+
+  .lightbox-caption-bar {
+    bottom: 12px;
+    font-size: 13px;
   }
 
   .lightbox-toolbar button {
@@ -2769,6 +2824,28 @@ body.modal-open {
 }
 
 @media (max-width: 430px) {
+  /* 가운데 확대 컨트롤과 우상단 버튼이 한 줄에 같이 뜬다. 390px 에서 둘
+     사이가 13px 밖에 안 남아서, 더 좁아지면 겹친다. */
+  .lightbox-toolbar {
+    gap: 2px;
+    padding: 3px;
+  }
+
+  .lightbox-toolbar button {
+    min-width: 32px;
+    padding: 0 6px;
+  }
+
+  .lightbox-toolbar .lightbox-zoom-reset {
+    min-width: 52px;
+    font-size: 13px;
+  }
+
+  .lightbox-top-actions button {
+    width: 38px;
+    height: 38px;
+  }
+
   .tab {
     justify-items: center;
     grid-template-columns: 1fr;
@@ -2931,6 +3008,7 @@ APP_JS = """(() => {
   const lightbox = document.getElementById("lightbox");
   const lightboxImageWrap = document.getElementById("lightboxImageWrap");
   const lightboxImage = document.getElementById("lightboxImage");
+  const lightboxLike = document.getElementById("lightboxLike");
   const lightboxCaption = document.getElementById("lightboxCaption");
   const lightboxZoomValue = document.getElementById("lightboxZoomValue");
   const lightboxZoomOut = document.querySelector(".lightbox-zoom-out");
@@ -3557,6 +3635,7 @@ APP_JS = """(() => {
         src: image.currentSrc || image.src,
         alt: image.alt || title,
         caption: figure.querySelector("figcaption")?.textContent || title,
+        post_id: post.id,
       });
 
       if (post.type === "album") {
@@ -4043,6 +4122,16 @@ APP_JS = """(() => {
     lightboxImage.src = item.src;
     lightboxImage.alt = item.alt;
     lightboxCaption.textContent = `${index + 1} / ${state.lightboxItems.length} · ${item.caption}`;
+    // 프로필 사진처럼 글에 속하지 않은 이미지는 좋아요를 달지 않는다.
+    if (item.post_id) {
+      lightboxLike.innerHTML = likeButtonHtml(
+        item.src, item.post_id, state.photoLikes[item.src] || 0,
+      );
+      lightboxLike.hidden = false;
+    } else {
+      lightboxLike.innerHTML = "";
+      lightboxLike.hidden = true;
+    }
     lightboxPrev.hidden = state.lightboxItems.length < 2;
     lightboxNext.hidden = state.lightboxItems.length < 2;
     lightbox.hidden = false;
@@ -4575,6 +4664,8 @@ APP_JS = """(() => {
       src: photo.src,
       alt: photo.caption || "",
       caption: photo.caption || photo.date || "",
+      // 좋아요를 누르려면 어느 글의 사진인지 알아야 한다.
+      post_id: photo.post_id,
     }));
   }
 
@@ -4812,7 +4903,22 @@ APP_JS = """(() => {
   });
 
   lightbox.addEventListener("click", (event) => {
-    if (event.target === lightbox || event.target.closest(".lightbox-close")) closeLightbox();
+    // 좋아요가 먼저다. 아래 닫기 조건에 걸리면 누르자마자 창이 닫힌다.
+    const like = event.target.closest(".like-button");
+    if (like) {
+      event.preventDefault();
+      bumpLike(like);
+      return;
+    }
+
+    // 사진 바깥을 누르면 닫힌다. 예전에는 여백이 lightbox 자신이었지만 이제
+    // 사진 틀이 화면을 다 덮으므로, 틀을 눌렀고 사진이 아닌 경우로 본다.
+    // 확대 중에는 끄지 않는다 — 끌어서 옮기다 손을 떼면 닫혀 버린다.
+    const onBackdrop = event.target === lightboxImageWrap
+      && state.lightboxZoom <= LIGHTBOX_MIN_ZOOM;
+    if (onBackdrop || event.target === lightbox || event.target.closest(".lightbox-close")) {
+      closeLightbox();
+    }
     if (event.target.closest(".lightbox-prev")) moveLightbox(-1);
     if (event.target.closest(".lightbox-next")) moveLightbox(1);
     if (event.target.closest(".lightbox-zoom-out")) changeLightboxZoom(-LIGHTBOX_ZOOM_STEP);
