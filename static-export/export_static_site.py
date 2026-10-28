@@ -2775,12 +2775,21 @@ body.modal-open {
   /* 가로 손짓은 우리가 쓴다(사진 넘기기). 이게 없으면 브라우저가 뒤로가기
      제스처로 가져가는 기기가 있다. 확대 중에는 아래의 is-zoomed 가 none 으로
      덮어써서 사진을 끌어 옮길 수 있다. */
+  /* 핀치 확대도 우리가 받는다 — pinch-zoom 을 브라우저에 넘기면 화면 전체가
+     커져서 버튼까지 따라 커지고, 그동안 우리 확대율은 1 인 채라 넘기기가
+     살아 있다. 두 손가락은 touchmove 에서 가로채 lightboxZoom 을 움직인다. */
   touch-action: pan-y;
   overflow: auto;
   overscroll-behavior: contain;
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* 넘기는 동안 사진이 틀 밖으로 나간다. overflow: auto 인 채로는 그게
+   스크롤 영역으로 잡혀 가로 스크롤바가 깜빡인다. */
+.lightbox-image-wrap.is-sliding {
+  overflow: hidden;
 }
 
 .lightbox-image-wrap.is-zoomed {
@@ -3252,7 +3261,9 @@ APP_JS = """(() => {
   function likeButtonHtml(src, postId, count) {
     return (
       `<button class="like-button" type="button" data-photo-src="${escapeHtml(src)}"`
-      + ` data-post-id="${escapeHtml(String(postId))}" aria-label="좋아요">`
+      // 올린 사진·영상에는 글이 없다. String(undefined) 를 그대로 쓰면
+      // "undefined" 가 좋아요 행에 적힌다.
+      + ` data-post-id="${escapeHtml(String(postId || ""))}" aria-label="좋아요">`
       + `${THUMB_ICON}<span class="like-count">${count || ""}</span></button>`
     );
   }
@@ -3269,6 +3280,23 @@ APP_JS = """(() => {
   function videoIdFromPath(pathname) {
     const match = String(pathname || "").match(/^\/videos\/([A-Za-z0-9_-]+)\/?$/);
     return match ? match[1] : null;
+  }
+
+  // 사진도 주소를 가진다. 영상과 같은 이유다 — 폰에서 뒤로가기(화면 가장자리
+  // 쓸기)로 라이트박스를 닫을 수 있어야 하고, 사진 한 장을 그대로 보낼 수
+  // 있어야 한다.
+  //
+  // 영상과 달리 사진에는 id 가 없고 경로가 곧 이름이다. 경로를 그대로 주소에
+  // 넣으면 슬래시가 섞여 읽기 어렵다. FNV-1a 를 씨앗 둘로 돌려 64비트짜리
+  // 짧은 이름을 만든다 — 7천 장에서 겹칠 일은 사실상 없다.
+  function photoIdFromPath(pathname) {
+    const match = String(pathname || "").match(/^\/photos\/([a-f0-9]{16})\/?$/);
+    return match ? match[1] : null;
+  }
+
+  function photoRouteId(src) {
+    return shuffleKey(0, src).toString(16).padStart(8, "0")
+      + shuffleKey(0x9e3779b9, src).toString(16).padStart(8, "0");
   }
 
   function postIdFromPath(pathname) {
@@ -3315,6 +3343,7 @@ APP_JS = """(() => {
     lightboxIndex: 0,
     lightboxZoom: 1,
     lightboxDrag: null,
+    lightboxPinch: null,
   };
 
   const tabsNode = document.getElementById("tabs");
@@ -4485,43 +4514,196 @@ APP_JS = """(() => {
   // 모바일에서 좌우로 밀어 넘기기. 화살표는 손가락으로 겨누기엔 작고,
   // 사진을 넘기는 손짓은 원래 미는 것이다.
   //
+  // 미는 동안 사진이 손가락을 따라간다. 따라오지 않으면 민 것이 먹혔는지,
+  // 아직 안 넘어간 건지, 끝이라 안 넘어가는 건지 알 수가 없다.
+  //
   // 확대 중에는 끈다 — 그때 같은 손짓은 사진을 끌어 옮기는 동작이고,
   // 둘을 같이 켜면 확대해서 들여다보다가 사진이 넘어가 버린다.
   const SWIPE_MIN_PX = 48;
   const SWIPE_MAX_MS = 700;
+  const SWIPE_LOCK_PX = 12;
+  const SLIDE_MS = 190;
   let swipeStart = null;
   let swipedAt = 0;
+  let slideBusy = false;
+
+  // 사진만 움직인다. 틀을 움직이면 캡션·좋아요까지 같이 끌려간다.
+  function setSlideOffset(px, animate) {
+    lightboxImage.style.transition = animate
+      ? `transform ${SLIDE_MS}ms ease-out, opacity ${SLIDE_MS}ms ease-out`
+      : "none";
+    lightboxImage.style.transform = px ? `translateX(${Math.round(px)}px)` : "";
+    // 멀리 밀수록 옅어진다. 넘어가기 직전이라는 신호다.
+    lightboxImage.style.opacity = px ? String(Math.max(0.4, 1 - Math.abs(px) / 900)) : "";
+    lightboxImageWrap.classList.toggle("is-sliding", Boolean(px));
+  }
+
+  function clearSlideOffset() {
+    lightboxImage.style.transition = "";
+    lightboxImage.style.transform = "";
+    lightboxImage.style.opacity = "";
+    lightboxImageWrap.classList.remove("is-sliding");
+  }
+
+  // 지금 사진을 민 쪽으로 내보내고, 다음 사진을 반대쪽에서 들여온다.
+  // 화살표·키보드도 이걸 쓴다 — 넘어갔다는 신호는 손짓일 때만 필요한 게 아니다.
+  function slideLightbox(delta) {
+    if (lightbox.hidden || state.lightboxItems.length < 2) return;
+    if (slideBusy) return;
+    slideBusy = true;
+    const width = lightboxImageWrap.clientWidth || 360;
+    setSlideOffset(delta > 0 ? -width : width, true);
+    window.setTimeout(() => {
+      moveLightbox(delta);
+      // showLightbox 가 style 을 통째로 지우므로 여기서 다시 건다. 들어오는
+      // 쪽은 화면 너비까지 갈 필요가 없다 — 0.4 쯤이면 방향이 읽히고 짧다.
+      setSlideOffset(delta > 0 ? width * 0.4 : -width * 0.4, false);
+      // 한 프레임 그린 뒤에 0으로 돌려야 브라우저가 중간 상태를 보고
+      // 애니메이션을 건다. 같은 프레임에서 바꾸면 그냥 제자리다.
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          setSlideOffset(0, true);
+          window.setTimeout(() => {
+            clearSlideOffset();
+            slideBusy = false;
+          }, SLIDE_MS);
+        });
+      });
+    }, SLIDE_MS);
+  }
 
   function startSwipe(event) {
     // canDragLightboxImage() 를 쓰지 않는다. 그건 "확대했고 **실제로 넘친다**"
     // 라서, 작은 사진을 확대하면 넘치지 않아 스와이프가 살아 있다. 확대해 놓고
     // 밀었는데 다음 사진으로 넘어가면 당황스럽다 — 확대 중이면 그냥 끈다.
-    if (lightbox.hidden || event.touches.length !== 1
+    if (lightbox.hidden || event.touches.length !== 1 || slideBusy
         || state.lightboxZoom > LIGHTBOX_MIN_ZOOM) {
       swipeStart = null;
       return;
     }
     const touch = event.touches[0];
-    swipeStart = { x: touch.clientX, y: touch.clientY, at: Date.now() };
+    swipeStart = { x: touch.clientX, y: touch.clientY, at: Date.now(), locked: false };
+  }
+
+  function moveSwipe(event) {
+    if (!swipeStart || event.touches.length !== 1) return;
+    const touch = event.touches[0];
+    const dx = touch.clientX - swipeStart.x;
+    const dy = touch.clientY - swipeStart.y;
+    if (!swipeStart.locked) {
+      // 어느 쪽으로 가려는 손짓인지 정해질 때까지 기다린다.
+      if (Math.abs(dx) < SWIPE_LOCK_PX && Math.abs(dy) < SWIPE_LOCK_PX) return;
+      if (Math.abs(dy) > Math.abs(dx)) {
+        // 세로가 먼저면 스크롤하려는 손짓이다. 더는 보지 않는다.
+        swipeStart = null;
+        clearSlideOffset();
+        return;
+      }
+      swipeStart.locked = true;
+    }
+    if (state.lightboxItems.length < 2) return;
+    // 브라우저가 가로 손짓을 뒤로가기 제스처로 가져가지 않도록 막는다.
+    if (event.cancelable) event.preventDefault();
+    setSlideOffset(dx, false);
   }
 
   function endSwipe(event) {
     const start = swipeStart;
     swipeStart = null;
-    if (!start || state.lightboxItems.length < 2) return;
+    if (!start) return;
+    if (start.locked) {
+      // 되돌아가든 넘어가든, 손을 뗄 때 따라오는 click 으로 창이 닫히면 안 된다.
+      swipedAt = Date.now();
+    }
+    if (state.lightboxItems.length < 2) {
+      clearSlideOffset();
+      return;
+    }
 
     const touch = event.changedTouches && event.changedTouches[0];
-    if (!touch) return;
+    if (!touch) {
+      clearSlideOffset();
+      return;
+    }
     const dx = touch.clientX - start.x;
     const dy = touch.clientY - start.y;
 
     // 세로로 더 많이 움직였으면 넘기지 않는다. 스크롤하려던 손짓이다.
-    if (Math.abs(dx) < SWIPE_MIN_PX || Math.abs(dx) < Math.abs(dy) * 1.5) return;
-    if (Date.now() - start.at > SWIPE_MAX_MS) return;
+    const far = Math.abs(dx) >= SWIPE_MIN_PX && Math.abs(dx) >= Math.abs(dy) * 1.5;
+    if (!far || Date.now() - start.at > SWIPE_MAX_MS) {
+      // 안 넘어가면 제자리로 돌아간다. 그 자체가 "여기까지는 아니다" 라는 답이다.
+      setSlideOffset(0, true);
+      window.setTimeout(clearSlideOffset, SLIDE_MS);
+      return;
+    }
 
     // 왼쪽으로 밀면 다음 사진. 종이를 넘기는 방향과 같다.
-    moveLightbox(dx < 0 ? 1 : -1);
+    slideLightbox(dx < 0 ? 1 : -1);
     swipedAt = Date.now();
+  }
+
+  // 두 손가락으로 확대. 위의 touch-action: pan-y 가 브라우저 핀치를 끄므로
+  // (가로 손짓은 넘기기로 쓴다) 여기서 직접 받는다. 화면이 아니라 사진만
+  // 커지고, 확대율이 올라가면 넘기기는 저절로 꺼진다.
+  function touchSpan(touches) {
+    return Math.hypot(
+      touches[0].clientX - touches[1].clientX,
+      touches[0].clientY - touches[1].clientY,
+    ) || 1;
+  }
+
+  function touchCenter(touches) {
+    return {
+      clientX: (touches[0].clientX + touches[1].clientX) / 2,
+      clientY: (touches[0].clientY + touches[1].clientY) / 2,
+    };
+  }
+
+  function startPinch(event) {
+    if (lightbox.hidden) return;
+    swipeStart = null;
+    clearSlideOffset();
+    state.lightboxPinch = { span: touchSpan(event.touches), zoom: state.lightboxZoom };
+  }
+
+  function movePinch(event) {
+    const pinch = state.lightboxPinch;
+    if (!pinch || event.touches.length < 2) return;
+    if (event.cancelable) event.preventDefault();
+    const next = clampZoom(pinch.zoom * (touchSpan(event.touches) / pinch.span));
+    if (next === state.lightboxZoom) return;
+    state.lightboxZoom = next;
+    // 벌린 두 손가락 사이를 붙잡고 커진다. 가운데를 기준으로 하면 보고 있던
+    // 자리가 화면 밖으로 밀려난다.
+    renderLightboxZoom({ anchor: lightboxAnchorFromEvent(touchCenter(event.touches)) });
+  }
+
+  function handleLightboxTouchStart(event) {
+    if (event.touches.length >= 2) {
+      startPinch(event);
+      return;
+    }
+    startSwipe(event);
+  }
+
+  function handleLightboxTouchMove(event) {
+    if (state.lightboxPinch) {
+      movePinch(event);
+      return;
+    }
+    moveSwipe(event);
+  }
+
+  function handleLightboxTouchEnd(event) {
+    if (state.lightboxPinch) {
+      if (event.touches.length >= 2) return;
+      state.lightboxPinch = null;
+      // 한 손가락이 남아 있어도 그걸로 넘기지 않는다. 핀치를 풀다가 사진이
+      // 넘어가 버린다.
+      swipeStart = null;
+      return;
+    }
+    endSwipe(event);
   }
 
   function handleLightboxWheel(event) {
@@ -4582,8 +4764,10 @@ APP_JS = """(() => {
     lightboxImage.src = item.src;
     lightboxImage.alt = item.alt;
     lightboxCaption.textContent = `${index + 1} / ${state.lightboxItems.length} · ${item.caption}`;
-    // 프로필 사진처럼 글에 속하지 않은 이미지는 좋아요를 달지 않는다.
-    if (item.post_id) {
+    // 프로필 사진처럼 어디에도 속하지 않은 이미지는 좋아요를 달지 않는다.
+    // 올린 사진은 글이 없어서 post_id 가 비지만 좋아요는 센다 — photo_likes
+    // 는 photo_id 로 세고 post_id 는 적어 두기만 한다.
+    if (item.post_id || item.likeable) {
       lightboxLike.innerHTML = likeButtonHtml(
         item.src, item.post_id, state.photoLikes[item.src] || 0,
       );
@@ -4594,6 +4778,13 @@ APP_JS = """(() => {
     }
     lightboxPrev.hidden = state.lightboxItems.length < 2;
     lightboxNext.hidden = state.lightboxItems.length < 2;
+    // 이전·다음으로 옮겨 다닌 것까지 뒤로가기로 되짚게 하면, 20장을 넘긴 뒤
+    // 목록으로 가는 데 뒤로가기를 20번 눌러야 한다. 주소만 갈아 끼운다.
+    if (pushedPhotoRoute && item.src) {
+      window.history.replaceState(
+        { photo: photoRouteId(item.src) }, "", `/photos/${photoRouteId(item.src)}/`,
+      );
+    }
     lightbox.hidden = false;
     window.requestAnimationFrame(resetLightboxZoom);
   }
@@ -4602,8 +4793,13 @@ APP_JS = """(() => {
     lightbox.hidden = true;
     state.lightboxZoom = LIGHTBOX_MIN_ZOOM;
     state.lightboxDrag = null;
+    state.lightboxPinch = null;
+    swipeStart = null;
+    slideBusy = false;
+    pushedPhotoRoute = false;
     lightboxImageWrap.classList.remove("is-zoomed");
     lightboxImageWrap.classList.remove("is-dragging");
+    lightboxImageWrap.classList.remove("is-sliding");
     lightboxImage.removeAttribute("style");
     lightboxImage.removeAttribute("src");
   }
@@ -4612,6 +4808,65 @@ APP_JS = """(() => {
     if (!state.lightboxItems.length || lightbox.hidden) return;
     const next = (state.lightboxIndex + delta + state.lightboxItems.length) % state.lightboxItems.length;
     showLightbox(next);
+  }
+
+  // 모아보기·업로드에서 연 사진은 주소를 가진다. 영상과 같은 방식이다 —
+  // 폰의 뒤로가기로 닫히고, 사진 한 장을 그대로 보낼 수 있다.
+  //
+  // 글 본문(/posts/123/)에서 연 사진은 그대로 둔다. 그 사진들은 본문에서
+  // 긁어온 것이라 photos.json 에 없을 수도 있어서, 주소만 받아서는 다시
+  // 찾아낼 수가 없다.
+  let pushedPhotoRoute = false;
+
+  function goToPhoto(index, items = null) {
+    const list = items || state.lightboxItems;
+    const item = list[index];
+    if (!item) return;
+    if (item.src) {
+      const id = photoRouteId(item.src);
+      window.history.pushState({ photo: id }, "", `/photos/${id}/`);
+      pushedPhotoRoute = true;
+    }
+    showLightbox(index, items);
+  }
+
+  function leavePhoto() {
+    if (lightbox.hidden) return;
+    if (pushedPhotoRoute) {
+      // popstate 가 받아서 닫는다. 여기서 바로 닫으면 주소만 남는다.
+      window.history.back();
+      return;
+    }
+    // 주소를 직접 열고 들어왔으면 되돌아갈 자리가 없다. 주소만 목록으로
+    // 돌려놓는다 — 안 그러면 새로고침할 때 사진이 다시 열린다.
+    if (photoIdFromPath(window.location.pathname)) {
+      window.history.replaceState({}, "", `/?type=${encodeURIComponent(state.activeType)}`);
+    }
+    closeLightbox();
+  }
+
+  // 주소를 직접 열었거나 뒤로·앞으로 온 경우. 지금 걸린 필터 안에서 먼저
+  // 찾고, 거기 없으면 전체에서 찾는다 — 지난달 필터가 켜져 있다고 공유받은
+  // 사진이 안 열리면 그게 더 이상하다.
+  function openPhotoRoute(id) {
+    const pick = (list) => list.findIndex((item) => photoRouteId(item.src) === id);
+    let pool = filteredPhotos().filter((item) => item.kind !== "video");
+    let index = pick(pool);
+    if (index < 0) {
+      pool = galleryItems()
+        .filter((item) => item.kind !== "video")
+        .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+      index = pick(pool);
+    }
+    if (index < 0) return false;
+    showLightbox(index, pool.map((item) => ({
+      src: item.src,
+      alt: item.caption || "",
+      caption: item.caption || item.date || "",
+      post_id: item.post_id,
+      likeable: true,
+    })));
+    return true;
   }
 
   // ---- 관리자 모드 ----
@@ -5501,6 +5756,7 @@ APP_JS = """(() => {
       src: item.src,
       alt: item.caption || "",
       caption: item.caption || uploadDate(item),
+      likeable: true,
     }));
   }
 
@@ -5568,8 +5824,9 @@ APP_JS = """(() => {
       src: photo.src,
       alt: photo.caption || "",
       caption: photo.caption || photo.date || "",
-      // 좋아요를 누르려면 어느 글의 사진인지 알아야 한다.
+      // 좋아요는 사진 경로로 센다. post_id 는 어느 글의 사진인지 적어 두는 용도다.
       post_id: photo.post_id,
+      likeable: true,
     }));
   }
 
@@ -5635,9 +5892,16 @@ APP_JS = """(() => {
         // 채워야 "3 / 18" 과 이전·다음이 맞는다.
         const deepVideo = videoIdFromPath(window.location.pathname);
         if (deepVideo) openVideoModal(deepVideo);
+        const deepPhoto = photoIdFromPath(window.location.pathname);
+        // 닫았을 때 사진이 있는 화면이 나오도록 탭도 같이 옮긴다.
+        if (deepPhoto && state.activeType !== "photos" && state.activeType !== "uploads") {
+          state.activeType = "photos";
+        }
         await loadTopLikes();
         renderMonthOptions();
         refreshView();
+        // 목록을 다 채운 뒤에 연다 — "3 / 18" 과 이전·다음이 맞아야 한다.
+        if (deepPhoto) openPhotoRoute(deepPhoto);
       }
     } catch {
       if (state.selectedId === null) {
@@ -5700,7 +5964,7 @@ APP_JS = """(() => {
     const uploadCell = event.target.closest("figure[data-upload-index]");
     if (uploadCell) {
       event.preventDefault();
-      showLightbox(Number(uploadCell.dataset.uploadIndex), state.lightboxItems);
+      goToPhoto(Number(uploadCell.dataset.uploadIndex), state.lightboxItems);
       return;
     }
 
@@ -5729,7 +5993,7 @@ APP_JS = """(() => {
 
     const cell = event.target.closest("figure[data-photo-index]");
     if (cell) {
-      showLightbox(Number(cell.dataset.photoIndex), state.lightboxItems);
+      goToPhoto(Number(cell.dataset.photoIndex), state.lightboxItems);
       return;
     }
 
@@ -5902,10 +6166,10 @@ APP_JS = """(() => {
       && state.lightboxZoom <= LIGHTBOX_MIN_ZOOM
       && Date.now() - swipedAt > 400;
     if (onBackdrop || event.target === lightbox || event.target.closest(".lightbox-close")) {
-      closeLightbox();
+      leavePhoto();
     }
-    if (event.target.closest(".lightbox-prev")) moveLightbox(-1);
-    if (event.target.closest(".lightbox-next")) moveLightbox(1);
+    if (event.target.closest(".lightbox-prev")) slideLightbox(-1);
+    if (event.target.closest(".lightbox-next")) slideLightbox(1);
     if (event.target.closest(".lightbox-zoom-out")) changeLightboxZoom(-LIGHTBOX_ZOOM_STEP);
     if (event.target.closest(".lightbox-zoom-in")) changeLightboxZoom(LIGHTBOX_ZOOM_STEP);
     if (event.target.closest(".lightbox-zoom-reset")) resetLightboxZoom();
@@ -5917,9 +6181,16 @@ APP_JS = """(() => {
     toggleLightboxZoom(lightboxAnchorFromEvent(event));
   });
   lightboxImageWrap.addEventListener("wheel", handleLightboxWheel, { passive: false });
-  lightboxImageWrap.addEventListener("touchstart", startSwipe, { passive: true });
-  lightboxImageWrap.addEventListener("touchend", endSwipe, { passive: true });
-  lightboxImageWrap.addEventListener("touchcancel", () => { swipeStart = null; }, { passive: true });
+  lightboxImageWrap.addEventListener("touchstart", handleLightboxTouchStart, { passive: true });
+  // passive 로 두면 preventDefault 가 안 먹어서, 사진을 미는 동안 브라우저가
+  // 가로 손짓을 뒤로가기로 가져가는 기기가 있다.
+  lightboxImageWrap.addEventListener("touchmove", handleLightboxTouchMove, { passive: false });
+  lightboxImageWrap.addEventListener("touchend", handleLightboxTouchEnd, { passive: true });
+  lightboxImageWrap.addEventListener("touchcancel", () => {
+    swipeStart = null;
+    state.lightboxPinch = null;
+    clearSlideOffset();
+  }, { passive: true });
 
   lightboxImageWrap.addEventListener("pointerdown", startLightboxDrag);
   lightboxImageWrap.addEventListener("pointermove", moveLightboxDrag);
@@ -5944,9 +6215,9 @@ APP_JS = """(() => {
       leaveVideo();
       return;
     }
-    if (event.key === "Escape") closeLightbox();
-    if (event.key === "ArrowLeft") moveLightbox(-1);
-    if (event.key === "ArrowRight") moveLightbox(1);
+    if (event.key === "Escape") leavePhoto();
+    if (event.key === "ArrowLeft") slideLightbox(-1);
+    if (event.key === "ArrowRight") slideLightbox(1);
     if (!lightbox.hidden && (event.key === "+" || event.key === "=")) {
       event.preventDefault();
       changeLightboxZoom(LIGHTBOX_ZOOM_STEP);
@@ -5980,8 +6251,12 @@ APP_JS = """(() => {
       openVideoModal(id);
       return;
     }
+    const photo = photoIdFromPath(window.location.pathname);
+    if (photo && openPhotoRoute(photo)) return;
     pushedVideoRoute = false;
+    pushedPhotoRoute = false;
     closeVideoModal();
+    closeLightbox();
   });
 
   uploadInput.addEventListener("change", () => {
