@@ -2,6 +2,7 @@
  * 댓글.
  *
  *   GET  /api/comments?type=post&id=123
+ *   GET  /api/comments?counts=photo        사진별 댓글 수 (뱃지용)
  *   POST /api/comments   { type, id, child, body }
  *
  * 쓰기에 인증이 없다. 사이트를 전부 공개로 두기로 한 결정의 연장이고,
@@ -18,27 +19,62 @@ import {
   CHILD_KEYS,
 } from "../_lib.js";
 
-const TARGET_TYPES = ["post", "video"];
+// 사진의 target_id 는 사진 경로다. photo_likes 의 photo_id 와 같은 값이라,
+// 같은 사진이 두 표에서 같은 이름으로 묶인다.
+const TARGET_TYPES = ["post", "video", "photo"];
 const MAX_BODY = 1000;
 const PAGE_SIZE = 200;
+
+// 뱃지는 "댓글이 달렸다"를 보여주는 것이지 순위가 아니다. 가족이 쓰는
+// 사이트에서 댓글 달린 사진이 천 장을 넘을 일은 없고, 넘으면 그때는
+// 사진별로 따로 묻는 게 맞다.
+const COUNTS_LIMIT = 1000;
 
 // 한 IP 가 1분에 남길 수 있는 댓글 수. 사람이 손으로 쓰는 속도와는 무관한
 // 값이라 가족 입장에선 걸릴 일이 없고, 스크립트는 걸린다.
 const RATE_WINDOW_MS = 60_000;
 const RATE_MAX = 10;
 
+// 사진의 id 는 경로라서 report id 나 video id 보다 길다. photo_likes 가
+// photo_id 에 쓰는 한도와 같은 값으로 맞춘다.
+const MAX_TARGET_ID = 400;
+
 function readTarget(params) {
   const type = String(params.get("type") ?? "").trim();
   const id = String(params.get("id") ?? "").trim();
   if (!TARGET_TYPES.includes(type)) return null;
-  if (!id || id.length > 100) return null;
+  if (!id || id.length > MAX_TARGET_ID) return null;
   return { type, id };
 }
 
 export async function onRequestGet({ request, env }) {
   const url = new URL(request.url);
+
+  // 사진을 하나씩 열 때마다 묻지 않으려고 한 번에 받아 둔다. 6,700장을
+  // 넘기면서 장마다 요청을 하나씩 더 보낼 수는 없다.
+  const counts = String(url.searchParams.get("counts") ?? "").trim();
+  if (counts) {
+    if (!TARGET_TYPES.includes(counts)) {
+      return badRequest(`counts must be one of ${TARGET_TYPES.join(", ")}`);
+    }
+    const { results } = await env.DB
+      .prepare(
+        `SELECT target_id, COUNT(*) AS count
+           FROM comments
+          WHERE target_type = ?
+          GROUP BY target_id
+          ORDER BY count DESC
+          LIMIT ?`,
+      )
+      .bind(counts, COUNTS_LIMIT)
+      .all();
+    const map = {};
+    for (const row of results) map[row.target_id] = row.count;
+    return json({ counts: map });
+  }
+
   const target = readTarget(url.searchParams);
-  if (!target) return badRequest("type must be post|video and id is required");
+  if (!target) return badRequest(`type must be one of ${TARGET_TYPES.join("|")} and id is required`);
 
   const { results } = await env.DB
     .prepare(
@@ -60,8 +96,8 @@ export async function onRequestPost({ request, env }) {
 
   const type = String(payload.type ?? "").trim();
   const id = String(payload.id ?? "").trim();
-  if (!TARGET_TYPES.includes(type)) return badRequest("type must be post|video");
-  if (!id || id.length > 100) return badRequest("id is required");
+  if (!TARGET_TYPES.includes(type)) return badRequest(`type must be one of ${TARGET_TYPES.join("|")}`);
+  if (!id || id.length > MAX_TARGET_ID) return badRequest("id is required");
 
   const child = normalizeChild(payload.child);
   if (!child) return badRequest(`child must be one of ${CHILD_KEYS.join(", ")}`);

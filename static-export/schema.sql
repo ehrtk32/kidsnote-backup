@@ -35,8 +35,9 @@ CREATE INDEX IF NOT EXISTS ix_videos_child
 CREATE TABLE IF NOT EXISTS comments (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   child       TEXT NOT NULL,
-  target_type TEXT NOT NULL,              -- 'post' | 'video'
-  target_id   TEXT NOT NULL,              -- report id 또는 video id
+  target_type TEXT NOT NULL,              -- 'post' | 'video' | 'photo'
+  -- report id, video id, 또는 사진 경로(photo_likes.photo_id 와 같은 값)
+  target_id   TEXT NOT NULL,
   -- 지금은 익명으로 받는다. 나중에 이름을 받고 싶어질 때 마이그레이션 없이
   -- 쓸 수 있도록 컬럼만 비워 둔다.
   author      TEXT NOT NULL DEFAULT '',

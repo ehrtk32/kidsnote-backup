@@ -811,9 +811,20 @@ INDEX_HTML = """<!doctype html>
       <figcaption class="lightbox-caption-bar">
         <span class="lightbox-like" id="lightboxLike" hidden></span>
         <span id="lightboxCaption"></span>
+        <button class="lightbox-comment-toggle" id="lightboxCommentToggle" type="button"
+                aria-label="댓글" hidden></button>
       </figcaption>
     </figure>
     <button class="lightbox-nav lightbox-next" type="button" aria-label="다음 사진">&#8250;</button>
+    <!-- 사진 위로 올라오는 댓글 칸. 사진 틀 바깥에 두어야 여기서 미는 손짓이
+         사진 넘기기로 새지 않는다. -->
+    <section class="lightbox-comments" id="lightboxComments" hidden aria-label="사진 댓글">
+      <header class="lightbox-comments-head">
+        <h3 id="lightboxCommentsTitle">댓글</h3>
+        <button class="lightbox-comments-close" type="button" aria-label="댓글 닫기">&times;</button>
+      </header>
+      <div class="lightbox-comments-body" id="lightboxCommentsBody"></div>
+    </section>
   </div>
   <input class="upload-input" id="uploadInput" type="file" multiple hidden>
   <div class="upload-sheet" id="uploadSheet" hidden>
@@ -2844,6 +2855,133 @@ body.modal-open {
   text-align: center;
 }
 
+/* 댓글 칸이 열리면 사진과 캡션이 그 위로 비켜선다. 칸이 사진 한가운데를
+   덮으면 무엇에 다는 댓글인지가 안 보이고, 캡션·좋아요도 같이 가려진다.
+   높이는 칸이 그려진 뒤에 JS 가 --comments-h 로 넣어 준다 — 댓글 수에
+   따라 달라져서 CSS 로는 알 수 없다. */
+.lightbox.has-comments .lightbox-image-wrap {
+  bottom: var(--comments-h, 0px);
+}
+
+.lightbox.has-comments .lightbox-caption-bar {
+  bottom: calc(var(--comments-h, 0px) + 12px);
+}
+
+/* 댓글은 사진 위로 올라오는 칸이다. 사진을 가리지 않으려고 아래쪽만
+   쓰고, 열려 있는 동안에도 사진은 계속 보인다 — 무엇에 다는 댓글인지
+   보이지 않으면 쓸 말이 안 떠오른다. */
+.lightbox-comments {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  margin: 0 auto;
+  max-width: 560px;
+  /* dvh 는 폰에서 주소창이 접힐 때 같이 줄어든다. 키보드가 올라오면
+     그 위로 밀려 올라가도록 본문 쪽에서 다시 스크롤해 준다. */
+  max-height: min(72dvh, 560px);
+  display: flex;
+  flex-direction: column;
+  border-radius: 18px 18px 0 0;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 -14px 44px rgba(0, 0, 0, .45);
+}
+
+.lightbox-comments[hidden] {
+  display: none;
+}
+
+.lightbox-comments-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 16px 8px;
+}
+
+.lightbox-comments-head h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.lightbox-comments-body {
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 0 16px 16px;
+}
+
+/* 칸 안에서는 위쪽 경계선과 제목이 필요 없다 — 머리글이 이미 하고 있다. */
+.lightbox-comments .comments {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.lightbox-comments .comments-title {
+  display: none;
+}
+
+/* `.lightbox button` 이 라이트박스 안의 모든 버튼을 어두운 반투명으로
+   칠한다. 밝은 칸 안에서는 그게 맞지 않는다. */
+.lightbox-comments button {
+  backdrop-filter: none;
+}
+
+.lightbox-comments .comment-form button {
+  background: var(--accent);
+  color: #fff;
+}
+
+.lightbox-comments .comment-form button:disabled {
+  opacity: .6;
+}
+
+.lightbox-comments-close {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+body.is-admin .lightbox-comments .admin-delete {
+  color: var(--ink);
+}
+
+/* 캡션 줄의 댓글 버튼. 좋아요와 같은 모양으로 맞춘다. */
+.lightbox-comment-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 11px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .16);
+  color: #fff;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.lightbox-comment-toggle:hover {
+  background: rgba(255, 255, 255, .28);
+}
+
+.lightbox-comment-toggle svg {
+  width: 15px;
+  height: 15px;
+}
+
+.lightbox-comment-toggle.is-open {
+  background: var(--accent);
+}
+
 /* 모아보기 타일에서는 하트가 사진 모서리에 절대위치로 붙지만, 여기서는
    캡션 옆에 줄 세워야 한다. */
 .lightbox-like .like-button {
@@ -3258,6 +3396,13 @@ APP_JS = """(() => {
     + "</svg>"
   );
 
+  const COMMENT_ICON = (
+    '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">'
+    + '<path d="M12 3c5 0 9 3.1 9 7s-4 7-9 7c-.9 0-1.8-.1-2.6-.3L4 19l1.3-3.4'
+    + 'C3.9 14.3 3 12.7 3 10c0-3.9 4-7 9-7Z"/>'
+    + "</svg>"
+  );
+
   function likeButtonHtml(src, postId, count) {
     return (
       `<button class="like-button" type="button" data-photo-src="${escapeHtml(src)}"`
@@ -3322,6 +3467,8 @@ APP_JS = """(() => {
     uploads: [],
     uploadsLoaded: false,
     photoLikes: {},   // photo_id → 누른 횟수
+    photoComments: {},  // 사진 경로 → 댓글 수 (뱃지용)
+    lightboxCommentsOpen: false,
     photoSort: window.localStorage.getItem("kidsnote.photoSort") || "date",
     // 영상 보기 방식. 목록은 제목이 길어도 읽히고, 그리드는 썸네일이 커서
     // 무슨 장면인지 고르기 좋다. 폰에서는 그리드가 한 화면에 더 들어온다.
@@ -3372,6 +3519,9 @@ APP_JS = """(() => {
   const uploadFill = document.getElementById("uploadFill");
   const uploadNote = document.getElementById("uploadNote");
   const lightboxCaption = document.getElementById("lightboxCaption");
+  const lightboxComments = document.getElementById("lightboxComments");
+  const lightboxCommentsBody = document.getElementById("lightboxCommentsBody");
+  const lightboxCommentToggle = document.getElementById("lightboxCommentToggle");
   const lightboxZoomValue = document.getElementById("lightboxZoomValue");
   const lightboxZoomOut = document.querySelector(".lightbox-zoom-out");
   const lightboxZoomIn = document.querySelector(".lightbox-zoom-in");
@@ -4178,16 +4328,21 @@ APP_JS = """(() => {
   }
 
   // ---- 댓글 ----
+  //
+  // 글·영상·사진이 같은 표(`comments`)와 같은 화면 조각을 쓴다. id 대신
+  // 클래스로 찾는 이유는 **한 화면에 둘이 동시에 뜰 수 있어서**다 — 글
+  // 상세를 보다가 본문 사진을 크게 열면 글 댓글과 사진 댓글이 함께 있다.
+  // id 로 찾으면 둘 중 먼저 나온 것(글 쪽)만 잡힌다.
   function commentSectionHtml() {
     return (
-      '<section class="comments" id="comments">'
+      '<section class="comments">'
       + '<h3 class="comments-title">댓글</h3>'
-      + '<div class="comments-list" id="commentsList"><div class="empty">불러오는 중</div></div>'
-      + '<form class="comment-form" id="commentForm">'
-      + '<textarea id="commentBody" rows="2" maxlength="1000" placeholder="한마디 남겨주세요"></textarea>'
+      + '<div class="comments-list"><div class="empty">불러오는 중</div></div>'
+      + '<form class="comment-form">'
+      + '<textarea rows="2" maxlength="1000" placeholder="한마디 남겨주세요"></textarea>'
       + '<button type="submit">등록</button>'
       + "</form>"
-      + '<p class="comment-message" id="commentMessage" aria-live="polite"></p>'
+      + '<p class="comment-message" aria-live="polite"></p>'
       + "</section>"
     );
   }
@@ -4202,8 +4357,8 @@ APP_JS = """(() => {
     }).format(d);
   }
 
-  function renderComments(list) {
-    const node = document.getElementById("commentsList");
+  function renderComments(list, scope) {
+    const node = (scope || document).querySelector(".comments-list");
     if (!node) return;
     if (!list.length) {
       node.innerHTML = '<div class="empty">아직 댓글이 없습니다.</div>';
@@ -4219,23 +4374,32 @@ APP_JS = """(() => {
     )).join("");
   }
 
-  async function loadComments(type, id) {
-    const node = document.getElementById("commentsList");
+  async function loadComments(type, id, scope) {
+    const root = scope || document;
+    const node = root.querySelector(".comments-list");
     try {
       const response = await fetch(`/api/comments?type=${type}&id=${encodeURIComponent(id)}`);
       const ctype = response.headers.get("content-type") || "";
       if (!response.ok || !ctype.includes("application/json")) throw new Error("comments");
       const payload = await response.json();
-      renderComments(payload.comments || []);
+      const list = payload.comments || [];
+      renderComments(list, root);
+      // 방금 받은 수가 가장 정확하다. 뱃지도 여기서 맞춘다 — 댓글을 달면
+      // 다시 불러오므로 따로 세어 둘 필요가 없다.
+      if (type === "photo") {
+        state.photoComments[id] = list.length;
+        renderLightboxCommentButton();
+      }
     } catch {
       if (node) node.innerHTML = '<div class="error">댓글을 불러오지 못했습니다.</div>';
     }
   }
 
-  function wireCommentForm(type, id) {
-    const form = document.getElementById("commentForm");
-    const input = document.getElementById("commentBody");
-    const message = document.getElementById("commentMessage");
+  function wireCommentForm(type, id, scope) {
+    const root = scope || document;
+    const form = root.querySelector(".comment-form");
+    const input = root.querySelector(".comment-form textarea");
+    const message = root.querySelector(".comment-message");
     if (!form) return;
 
     form.addEventListener("submit", async (event) => {
@@ -4260,7 +4424,7 @@ APP_JS = """(() => {
           return;
         }
         input.value = "";
-        await loadComments(type, id);
+        await loadComments(type, id, root);
       } catch {
         message.textContent = "등록하지 못했습니다.";
       } finally {
@@ -4384,8 +4548,8 @@ APP_JS = """(() => {
       state.lightboxItems = [];
       enhanceMediaLightbox(post);
       enhancePhotoLikes(post);
-      wireCommentForm("post", post.id);
-      loadComments("post", post.id);
+      wireCommentForm("post", post.id, detail);
+      loadComments("post", post.id, detail);
     } catch {
       detail.innerHTML = '<div class="error">상세 내용을 불러오지 못했습니다.</div>';
     }
@@ -4778,6 +4942,10 @@ APP_JS = """(() => {
     }
     lightboxPrev.hidden = state.lightboxItems.length < 2;
     lightboxNext.hidden = state.lightboxItems.length < 2;
+    renderLightboxCommentButton();
+    // 칸을 열어 둔 채로 넘기면 댓글도 같이 따라간다. 닫았다가 다시 열게
+    // 하면 사진을 넘길 때마다 두 번씩 눌러야 한다.
+    if (state.lightboxCommentsOpen) renderLightboxComments();
     // 이전·다음으로 옮겨 다닌 것까지 뒤로가기로 되짚게 하면, 20장을 넘긴 뒤
     // 목록으로 가는 데 뒤로가기를 20번 눌러야 한다. 주소만 갈아 끼운다.
     if (pushedPhotoRoute && item.src) {
@@ -4790,6 +4958,7 @@ APP_JS = """(() => {
   }
 
   function closeLightbox() {
+    closeLightboxComments();
     lightbox.hidden = true;
     state.lightboxZoom = LIGHTBOX_MIN_ZOOM;
     state.lightboxDrag = null;
@@ -4808,6 +4977,95 @@ APP_JS = """(() => {
     if (!state.lightboxItems.length || lightbox.hidden) return;
     const next = (state.lightboxIndex + delta + state.lightboxItems.length) % state.lightboxItems.length;
     showLightbox(next);
+  }
+
+  // ---- 사진 댓글 ----
+  //
+  // 글·영상과 같은 표를 쓴다. 사진의 target_id 는 사진 경로이고, 그건
+  // photo_likes 의 photo_id 와 같은 값이다 — 한 사진이 두 표에서 같은
+  // 이름으로 묶인다.
+  //
+  // 사진마다 댓글이 있는지 미리 알아야 뱃지를 달 수 있는데, 6,700장을
+  // 넘기면서 장마다 묻을 수는 없다. 그래서 수만 한 번에 받아 둔다.
+  async function loadPhotoCommentCounts() {
+    try {
+      const response = await fetch("/api/comments?counts=photo");
+      const type = response.headers.get("content-type") || "";
+      if (!response.ok || !type.includes("application/json")) return;
+      const payload = await response.json();
+      state.photoComments = payload.counts || {};
+    } catch {
+      // 뱃지가 없어도 사진과 댓글은 멀쩡하다.
+    }
+  }
+
+  // 좋아요가 붙는 사진에만 붙인다. 프로필 일러스트처럼 어디에도 속하지
+  // 않은 그림에는 달 말이 없다.
+  function lightboxCommentTarget() {
+    const item = state.lightboxItems[state.lightboxIndex];
+    if (!item || !item.src) return "";
+    return (item.post_id || item.likeable) ? item.src : "";
+  }
+
+  function renderLightboxCommentButton() {
+    const src = lightboxCommentTarget();
+    lightboxCommentToggle.hidden = !src;
+    if (!src) return;
+    const count = state.photoComments[src] || 0;
+    lightboxCommentToggle.innerHTML = COMMENT_ICON
+      + `<span class="comment-count">${count || ""}</span>`;
+    lightboxCommentToggle.classList.toggle("is-open", state.lightboxCommentsOpen);
+  }
+
+  function renderLightboxComments() {
+    const src = lightboxCommentTarget();
+    if (!src) {
+      closeLightboxComments();
+      return;
+    }
+    lightboxCommentsBody.innerHTML = commentSectionHtml();
+    wireCommentForm("photo", src, lightboxCommentsBody);
+    loadComments("photo", src, lightboxCommentsBody);
+
+    const input = lightboxCommentsBody.querySelector("textarea");
+    if (input) {
+      // 폰에서는 키보드가 올라오면서 입력칸을 덮는다. 올라온 뒤에 밀어
+      // 올려야 해서 한 박자 늦게 부른다.
+      input.addEventListener("focus", () => {
+        window.setTimeout(() => input.scrollIntoView({ block: "center" }), 250);
+      });
+    }
+  }
+
+  // 칸의 높이는 댓글 수에 따라 달라진다. 사진이 비켜설 자리를 알려면
+  // 그려진 뒤에 재야 한다.
+  let lastCommentsHeight = -1;
+
+  function syncLightboxCommentsHeight() {
+    const height = state.lightboxCommentsOpen ? lightboxComments.offsetHeight : 0;
+    if (height === lastCommentsHeight) return;
+    lastCommentsHeight = height;
+    lightbox.style.setProperty("--comments-h", `${height}px`);
+    lightbox.classList.toggle("has-comments", state.lightboxCommentsOpen);
+    // 보이는 자리가 줄었으니 사진도 그 안에 다시 맞춘다.
+    if (!lightbox.hidden) renderLightboxZoom();
+  }
+
+  function openLightboxComments() {
+    if (lightbox.hidden || !lightboxCommentTarget()) return;
+    state.lightboxCommentsOpen = true;
+    lightboxComments.hidden = false;
+    renderLightboxComments();
+    renderLightboxCommentButton();
+    syncLightboxCommentsHeight();
+  }
+
+  function closeLightboxComments() {
+    state.lightboxCommentsOpen = false;
+    lightboxComments.hidden = true;
+    lightboxCommentsBody.innerHTML = "";
+    renderLightboxCommentButton();
+    syncLightboxCommentsHeight();
   }
 
   // 모아보기·업로드에서 연 사진은 주소를 가진다. 영상과 같은 방식이다 —
@@ -5199,8 +5457,8 @@ APP_JS = """(() => {
       const slot = document.getElementById("videoComments");
       if (slot) {
         slot.innerHTML = commentSectionHtml();
-        wireCommentForm("video", video.id);
-        loadComments("video", video.id);
+        wireCommentForm("video", video.id, slot);
+        loadComments("video", video.id, slot);
       }
       return;
     }
@@ -5223,8 +5481,8 @@ APP_JS = """(() => {
     const slot = document.getElementById("videoComments");
     if (slot) {
       slot.innerHTML = commentSectionHtml();
-      wireCommentForm("video", video.id);
-      loadComments("video", video.id);
+      wireCommentForm("video", video.id, slot);
+      loadComments("video", video.id, slot);
     }
   }
 
@@ -5881,7 +6139,7 @@ APP_JS = """(() => {
         await loadDetail(state.selectedId);
         // 상세를 먼저 그리고 나서 채운다. photos.json 은 수천 장짜리라
         // 기다렸다가 그리면 본문이 그만큼 늦게 뜬다.
-        Promise.all([loadVideos(), loadPhotos(), loadUploads()]).then(() => {
+        Promise.all([loadVideos(), loadPhotos(), loadUploads(), loadPhotoCommentCounts()]).then(() => {
           recomputeCounts();
           renderTabs();
         });
@@ -5897,7 +6155,7 @@ APP_JS = """(() => {
         if (deepPhoto && state.activeType !== "photos" && state.activeType !== "uploads") {
           state.activeType = "photos";
         }
-        await loadTopLikes();
+        await Promise.all([loadTopLikes(), loadPhotoCommentCounts()]);
         renderMonthOptions();
         refreshView();
         // 목록을 다 채운 뒤에 연다 — "3 / 18" 과 이전·다음이 맞아야 한다.
@@ -6045,7 +6303,7 @@ APP_JS = """(() => {
     if (!del) return;
     event.preventDefault();
     const videoId = videoModalLink.dataset.videoId || "";
-    deleteComment(del.dataset.deleteComment, () => loadComments("video", videoId));
+    deleteComment(del.dataset.deleteComment, () => loadComments("video", videoId, document.getElementById("videoComments")));
   });
 
   videoModalClose.addEventListener("click", leaveVideo);
@@ -6117,7 +6375,7 @@ APP_JS = """(() => {
     const del = event.target.closest("[data-delete-comment]");
     if (del) {
       event.preventDefault();
-      deleteComment(del.dataset.deleteComment, () => loadComments("post", state.selectedId));
+      deleteComment(del.dataset.deleteComment, () => loadComments("post", state.selectedId, detail));
       return;
     }
 
@@ -6157,6 +6415,31 @@ APP_JS = """(() => {
       return;
     }
 
+    // 댓글 칸 안을 누른 것은 사진 쪽 동작으로 새면 안 된다 — 글자를
+    // 긁다가 창이 닫히면 쓰던 댓글이 사라진다.
+    if (event.target.closest(".lightbox-comments")) {
+      if (event.target.closest(".lightbox-comments-close")) {
+        closeLightboxComments();
+        return;
+      }
+      const del = event.target.closest("[data-delete-comment]");
+      if (del) {
+        event.preventDefault();
+        const src = lightboxCommentTarget();
+        deleteComment(
+          del.dataset.deleteComment,
+          () => loadComments("photo", src, lightboxCommentsBody),
+        );
+      }
+      return;
+    }
+
+    if (event.target.closest(".lightbox-comment-toggle")) {
+      if (state.lightboxCommentsOpen) closeLightboxComments();
+      else openLightboxComments();
+      return;
+    }
+
     // 사진 바깥을 누르면 닫힌다. 예전에는 여백이 lightbox 자신이었지만 이제
     // 사진 틀이 화면을 다 덮으므로, 틀을 눌렀고 사진이 아닌 경우로 본다.
     // 확대 중에는 끄지 않는다 — 끌어서 옮기다 손을 떼면 닫혀 버린다.
@@ -6165,6 +6448,12 @@ APP_JS = """(() => {
     const onBackdrop = event.target === lightboxImageWrap
       && state.lightboxZoom <= LIGHTBOX_MIN_ZOOM
       && Date.now() - swipedAt > 400;
+    // 댓글을 열어 둔 채로 사진을 누르면 댓글만 닫는다. 창까지 닫히면
+    // 읽던 댓글이 통째로 사라진다.
+    if (onBackdrop && state.lightboxCommentsOpen) {
+      closeLightboxComments();
+      return;
+    }
     if (onBackdrop || event.target === lightbox || event.target.closest(".lightbox-close")) {
       leavePhoto();
     }
@@ -6204,6 +6493,13 @@ APP_JS = """(() => {
     if (!lightbox.hidden) renderLightboxZoom();
   });
 
+  // 댓글이 늦게 도착하면 칸이 그만큼 자란다. 사진이 다시 비켜서야 한다.
+  if (window.ResizeObserver) {
+    new window.ResizeObserver(() => {
+      if (state.lightboxCommentsOpen) syncLightboxCommentsHeight();
+    }).observe(lightboxComments);
+  }
+
   document.addEventListener("keydown", (event) => {
     // The video modal takes Escape first so closing it never also tears
     // down a lightbox sitting behind it.
@@ -6213,6 +6509,11 @@ APP_JS = """(() => {
     }
     if (event.key === "Escape" && !videoModal.hidden) {
       leaveVideo();
+      return;
+    }
+    // 댓글이 열려 있으면 그것부터 닫는다.
+    if (event.key === "Escape" && !lightbox.hidden && state.lightboxCommentsOpen) {
+      closeLightboxComments();
       return;
     }
     if (event.key === "Escape") leavePhoto();
