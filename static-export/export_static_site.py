@@ -808,6 +808,7 @@ INDEX_HTML = """<!doctype html>
       <div class="lightbox-image-wrap" id="lightboxImageWrap">
         <img id="lightboxImage" alt="" draggable="false">
       </div>
+      <button class="lightbox-comment-peek" id="lightboxCommentPeek" type="button" hidden></button>
       <figcaption class="lightbox-caption-bar">
         <span class="lightbox-like" id="lightboxLike" hidden></span>
         <span id="lightboxCaption"></span>
@@ -2955,6 +2956,51 @@ body.is-admin .lightbox-comments .admin-delete {
   color: var(--ink);
 }
 
+/* 댓글이 달린 사진은 열어 보지 않아도 무슨 말이 달렸는지 보인다. 말풍선
+   숫자만으로는 눌러 볼 이유가 생기지 않는다. 캡션 줄 바로 위에 얹고,
+   사진을 조금 가리는 건 감수한다. `.lightbox button` 이 라이트박스 안의
+   버튼을 전부 칠하므로 한 단계 더 구체적으로 쓴다. */
+.lightbox .lightbox-comment-peek {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 58px;
+  z-index: 2;
+  margin: 0 auto;
+  max-width: min(560px, calc(100% - 32px));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 9px 14px;
+  border-radius: 14px;
+  background: rgba(10, 12, 11, .62);
+  backdrop-filter: blur(6px);
+  color: #fff;
+  font-size: 13px;
+  line-height: 1.45;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lightbox .lightbox-comment-peek[hidden] {
+  display: none;
+}
+
+/* 한 줄까지만. 긴 댓글을 다 펼치면 사진이 그만큼 가려진다 — 읽고 싶으면
+   눌러서 칸을 연다. */
+.peek-line {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.peek-more {
+  color: rgba(255, 255, 255, .7);
+  font-size: 12px;
+}
+
 /* 캡션 줄의 댓글 버튼. 좋아요와 같은 모양으로 맞춘다. */
 .lightbox-comment-toggle {
   display: inline-flex;
@@ -3468,6 +3514,7 @@ APP_JS = """(() => {
     uploadsLoaded: false,
     photoLikes: {},   // photo_id → 누른 횟수
     photoComments: {},  // 사진 경로 → 댓글 수 (뱃지용)
+    photoCommentPeek: {},  // 사진 경로 → 받아 둔 댓글 목록 (미리보기용)
     lightboxCommentsOpen: false,
     photoSort: window.localStorage.getItem("kidsnote.photoSort") || "date",
     // 영상 보기 방식. 목록은 제목이 길어도 읽히고, 그리드는 썸네일이 커서
@@ -3522,6 +3569,7 @@ APP_JS = """(() => {
   const lightboxComments = document.getElementById("lightboxComments");
   const lightboxCommentsBody = document.getElementById("lightboxCommentsBody");
   const lightboxCommentToggle = document.getElementById("lightboxCommentToggle");
+  const lightboxCommentPeek = document.getElementById("lightboxCommentPeek");
   const lightboxZoomValue = document.getElementById("lightboxZoomValue");
   const lightboxZoomOut = document.querySelector(".lightbox-zoom-out");
   const lightboxZoomIn = document.querySelector(".lightbox-zoom-in");
@@ -4216,6 +4264,18 @@ APP_JS = """(() => {
     if (homeVideos.length) loadVisibleThumbs();
   }
 
+  // `img.src` 는 절대 URL 로 읽힌다. photos.json 과 모아보기는 경로를 쓰므로
+  // 그대로 두면 같은 사진이 좋아요·댓글에서 **다른 이름으로** 센다 — 글에서
+  // 누른 하트와 모아보기에서 누른 하트가 따로 쌓인다.
+  function sameOriginPath(value) {
+    try {
+      const url = new URL(value, window.location.href);
+      return url.origin === window.location.origin ? url.pathname + url.search : url.href;
+    } catch {
+      return value;
+    }
+  }
+
   function enhanceMediaLightbox(post) {
     const content = detail.querySelector(".detail-content");
     if (!content) return;
@@ -4229,7 +4289,7 @@ APP_JS = """(() => {
       if (!image) return;
       const index = items.length;
       items.push({
-        src: image.currentSrc || image.src,
+        src: sameOriginPath(image.getAttribute("src") || image.src),
         alt: image.alt || title,
         caption: figure.querySelector("figcaption")?.textContent || title,
         post_id: post.id,
@@ -4388,7 +4448,9 @@ APP_JS = """(() => {
       // 다시 불러오므로 따로 세어 둘 필요가 없다.
       if (type === "photo") {
         state.photoComments[id] = list.length;
+        state.photoCommentPeek[id] = list;
         renderLightboxCommentButton();
+        renderLightboxCommentPeek();
       }
     } catch {
       if (node) node.innerHTML = '<div class="error">댓글을 불러오지 못했습니다.</div>';
@@ -4943,6 +5005,8 @@ APP_JS = """(() => {
     lightboxPrev.hidden = state.lightboxItems.length < 2;
     lightboxNext.hidden = state.lightboxItems.length < 2;
     renderLightboxCommentButton();
+    renderLightboxCommentPeek();
+    ensureLightboxCommentPeek();
     // 칸을 열어 둔 채로 넘기면 댓글도 같이 따라간다. 닫았다가 다시 열게
     // 하면 사진을 넘길 때마다 두 번씩 눌러야 한다.
     if (state.lightboxCommentsOpen) renderLightboxComments();
@@ -5017,6 +5081,54 @@ APP_JS = """(() => {
     lightboxCommentToggle.classList.toggle("is-open", state.lightboxCommentsOpen);
   }
 
+  // 사진 아래에 댓글을 두 줄까지 띄운다. 숫자만 있으면 눌러 볼 이유가
+  // 생기지 않는다 — 무슨 말이 달렸는지가 보여야 연다.
+  const PEEK_LINES = 2;
+
+  function renderLightboxCommentPeek() {
+    const src = lightboxCommentTarget();
+    const count = src ? (state.photoComments[src] || 0) : 0;
+    // 칸이 열려 있으면 거기 다 있다. 두 번 보여 줄 이유가 없다.
+    if (!src || !count || state.lightboxCommentsOpen) {
+      lightboxCommentPeek.hidden = true;
+      return;
+    }
+    const list = state.photoCommentPeek[src] || [];
+    const shown = list.slice(-PEEK_LINES);
+    const more = count > shown.length
+      ? `<span class="peek-more">댓글 ${count}개 모두 보기</span>`
+      : "";
+    lightboxCommentPeek.innerHTML = shown.length
+      ? shown.map((comment) => (
+        `<span class="peek-line">${escapeHtml(comment.body)}</span>`
+      )).join("") + more
+      // 본문이 아직 안 왔을 때. 수는 이미 알고 있으니 그것만 먼저 건다.
+      : `<span class="peek-more">댓글 ${count}개 보기</span>`;
+    lightboxCommentPeek.hidden = false;
+  }
+
+  // 본문은 댓글이 **있는** 사진에서만 받는다. 모아보기에서 넘기는 내내
+  // 장마다 요청을 보내면 안 된다.
+  async function ensureLightboxCommentPeek() {
+    const src = lightboxCommentTarget();
+    if (!src || !state.photoComments[src]) return;
+    if (state.photoCommentPeek[src]) return;
+    try {
+      const response = await fetch(`/api/comments?type=photo&id=${encodeURIComponent(src)}`);
+      const type = response.headers.get("content-type") || "";
+      if (!response.ok || !type.includes("application/json")) return;
+      const payload = await response.json();
+      state.photoCommentPeek[src] = payload.comments || [];
+      state.photoComments[src] = (payload.comments || []).length;
+      // 받는 사이에 다음 사진으로 넘어갔을 수 있다.
+      if (lightboxCommentTarget() !== src) return;
+      renderLightboxCommentButton();
+      renderLightboxCommentPeek();
+    } catch {
+      // 미리보기가 없어도 말풍선 버튼으로 열면 된다.
+    }
+  }
+
   function renderLightboxComments() {
     const src = lightboxCommentTarget();
     if (!src) {
@@ -5057,6 +5169,7 @@ APP_JS = """(() => {
     lightboxComments.hidden = false;
     renderLightboxComments();
     renderLightboxCommentButton();
+    renderLightboxCommentPeek();
     syncLightboxCommentsHeight();
   }
 
@@ -5065,6 +5178,7 @@ APP_JS = """(() => {
     lightboxComments.hidden = true;
     lightboxCommentsBody.innerHTML = "";
     renderLightboxCommentButton();
+    renderLightboxCommentPeek();
     syncLightboxCommentsHeight();
   }
 
@@ -6431,6 +6545,11 @@ APP_JS = """(() => {
           () => loadComments("photo", src, lightboxCommentsBody),
         );
       }
+      return;
+    }
+
+    if (event.target.closest(".lightbox-comment-peek")) {
+      openLightboxComments();
       return;
     }
 
